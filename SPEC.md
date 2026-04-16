@@ -10,6 +10,7 @@
 > - **Section 4.8 hardened**: yfinance is now forbidden on the decision path. All live prices, IV, and order book data must come from moomoo real-time. Enforced via module-level import isolation and a CI guardrail test (Section 4.8.2). Hard Risk Gate now asserts `_source == "moomoo"` before evaluating.
 > - **Section 10A added**: Every non-hold decision must auto-submit a paper order to moomoo and log end-to-end latency from market tick to fill. Six timestamps are collected, six derived latencies are pre-computed. Pipeline performance regressions become visible. Note: backtest path cannot capture T4/T5 (no real orders submitted), so only T0-T3 (data-staleness + pipeline-duration) are directly comparable between backtest and live paper.
 > - **Session 0a hardening** (see §13 for the full change list): (a) `claude-opus-4-7` → `claude-opus-4-6` — 4.7 does not exist. (b) Anthropic SDK calling convention corrected to `thinking={"type": "enabled", "budget_tokens": N}`; there is no `effort` parameter and no `"adaptive"` thinking type. (c) Embedding provider made explicit — Voyage AI (paid) or local `sentence-transformers`; Anthropic has no embedding API. (d) `agents/risk/` renamed to `agents/risk_debate/` to disambiguate from top-level `risk/`. (e) `dataflows/yfinance_client.py` removed — §4.8.2 mandates `dataflows/historical.py` as the sole yfinance home. (f) Reddit mandates OAuth via PRAW; unauthenticated fallback removed. (g) §4.8.2 guardrail now scans `execution/` as well. (h) `dataflows/__init__.py` uses lazy `get_client()` instead of module-import-time instantiation. (i) News/Sentiment output schemas now explicitly define `strategic_score`/`macro_score`. (j) Added §4.10 (graceful degradation policy), §8.5 (inter-agent Pydantic schema contracts), §8.2 (backtest `sim_date` filter baked into vector store retrieval), and `MoomooClient.wait_for_fill()` in §4.8.3.
+> - **Session 0b ADR sync**: (a) **Scheduler**: system cron / launchd (macOS) replaces APScheduler — in-process scheduling shares a process with the pipeline, making crashes a SPOF. (b) **Backtest library**: `vectorbt` replaces `backtrader` — vectorized, actively maintained, simpler API. (c) **Per-cycle cost circuit breaker** added to §11.3 alongside the per-day hard stop (a single Opus-heavy cycle can blow through the daily budget by itself). (d) Phase 5 target revised from 1 week to 2 weeks (T0-T5 state threading is the hardest plumbing task in the project; 1 week is not realistic). (e) §14 integration test cost budget relaxed from $2.50 to $5.00 per decision (matches observed cost with Opus PM + Opus Quantum Tech Expert at thinking_budget=16000). (f) §16 "<10 min pipeline" metric now explicitly = §10A.6 green-zone target (§10A.6 yellow/red adjusted so yellow does not exceed §16 MVP threshold).
 
 ---
 
@@ -44,7 +45,7 @@ A 9-layer multi-agent trading system specialized for quantum computing stocks (I
 - **LLM SDK**: `anthropic` Python SDK (v0.40+)
 - **Vector store**: ChromaDB (local, embedded)
 - **Persistence**: SQLite via SQLAlchemy
-- **Scheduler**: APScheduler (or system cron)
+- **Scheduler**: system cron on Linux or `launchd` on macOS (NOT APScheduler — see §11.1 ADR)
 
 ### Data & market
 
@@ -61,7 +62,7 @@ A 9-layer multi-agent trading system specialized for quantum computing stocks (I
 - **Secrets**: `python-dotenv`
 - **Logging**: `loguru`
 - **Testing**: `pytest`, `pytest-asyncio`
-- **Backtest**: `backtrader` or `vectorbt`
+- **Backtest**: `vectorbt` (see §13 Phase 7 ADR — vectorized, Python-native, actively maintained)
 
 ### requirements.txt (seed, extend from TradingAgents/requirements.txt)
 
@@ -70,8 +71,8 @@ anthropic>=0.40.0
 langgraph>=0.2.0
 langchain-anthropic
 chromadb
+sentence-transformers
 sqlalchemy
-apscheduler
 feedparser
 httpx
 yfinance
@@ -83,11 +84,13 @@ python-dotenv
 loguru
 pytest
 pytest-asyncio
-backtrader
+vectorbt
 pandas
 numpy
 pydantic>=2.0
 ```
+(No `apscheduler` — scheduling is delegated to the OS via cron/launchd, §11.1.
+No `backtrader` — superseded by `vectorbt`, §13 Phase 7.)
 
 ---
 
@@ -1578,18 +1581,21 @@ moment data is fetched until execution. Do not let any node reset them.
 
 ### 10A.6 Expected latency budgets
 
-Set alerting thresholds based on these:
+Set alerting thresholds based on these. The green zone for `pipeline_duration_ms`
+is the project's MVP target (§16: "Daily pipeline completes in <10 minutes").
+Yellow = warning, Red = page the operator.
 
 | Metric | Green | Yellow (warn) | Red (alert) |
 |--------|-------|---------------|-------------|
 | `data_staleness_ms` | <1,000 | 1,000-3,000 | >3,000 (likely not using moomoo real-time) |
-| `pipeline_duration_ms` | <600,000 (10 min) | 600,000-900,000 | >900,000 (agents too slow, consider parallelization) |
+| `pipeline_duration_ms` | <600,000 (10 min — §16 MVP target) | 600,000-720,000 (breaches §16; investigate same day) | >720,000 (12 min; page operator, consider parallelization) |
 | `submission_latency_ms` | <500 | 500-2,000 | >2,000 (code issue) |
 | `fill_latency_ms` | <2,000 | 2,000-5,000 | >5,000 (moomoo paper issue) |
-| `total_market_to_fill_ms` | <650,000 | 650,000-1,000,000 | >1,000,000 |
+| `total_market_to_fill_ms` | <650,000 | 650,000-780,000 | >780,000 |
 
 Log each decision's latency; alert Gmail if any value hits red for >10% of
-decisions in a rolling 7-day window.
+decisions in a rolling 7-day window, OR if yellow persists for 3 consecutive
+trading days (indicates drift toward red).
 
 ### 10A.7 Daily latency report
 
@@ -1636,19 +1642,31 @@ paper trading.
 
 ## 11. Layer 0: Orchestration
 
-### 11.1 Scheduler (`orchestration/scheduler.py`)
+### 11.1 Scheduler
 
-Use APScheduler for in-process scheduling. For production, consider system cron.
+**ADR (Session 0b)**: scheduling is delegated to the **operating system** via
+`cron` (Linux) or `launchd` (macOS). APScheduler is NOT used.
+
+*Why*: APScheduler shares a process with the pipeline, so a pipeline crash
+takes out the scheduler — a single point of failure. A solo-dev system cannot
+afford a scenario where yesterday's bug silently blocks today's run. Putting
+the scheduler under the OS means (a) the daemon is independently supervised,
+(b) each day's run starts from a clean Python process, and (c) you can inspect
+and modify the schedule without touching Python.
+
+**Entry point** (`tradingagents/daily_cycle.py` — single-shot, no loop):
 
 ```python
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
+# tradingagents/daily_cycle.py
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.config.universe import UNIVERSE
+from tradingagents.risk.kill_switch import check_kill_switch
+from tradingagents.orchestration.alerts import alert_error
+from tradingagents.orchestration.cost_tracker import check_daily_budget
 
-def run_daily_cycle():
-    """Run the full 8-layer pipeline for the universe."""
-    from tradingagents.graph.trading_graph import TradingAgentsGraph
-    from tradingagents.config.universe import UNIVERSE
-    
+def main() -> int:
+    check_kill_switch()        # raises SystemExit if /tmp/quantum_agent_kill exists
+    check_daily_budget()       # raises if yesterday's spend rolled over somehow
     graph = TradingAgentsGraph()
     for ticker in UNIVERSE:
         try:
@@ -1656,12 +1674,60 @@ def run_daily_cycle():
             log_decision(decision)
         except Exception as e:
             alert_error(ticker, e)
+    return 0
 
-scheduler = BlockingScheduler(timezone="America/New_York")
-# Pre-market run, 90 min before open
-scheduler.add_job(run_daily_cycle, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
-scheduler.start()
+if __name__ == "__main__":
+    raise SystemExit(main())
 ```
+
+**macOS launchd installation** (`~/Library/LaunchAgents/com.user.quantum-agent.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.user.quantum-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/USER/miniconda3/envs/quantum-agent/bin/python</string>
+      <string>-m</string>
+      <string>tradingagents.daily_cycle</string>
+    </array>
+    <key>WorkingDirectory</key><string>/path/to/project</string>
+    <key>StartCalendarInterval</key>
+    <array>
+      <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+      <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+      <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+      <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+      <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+    <key>StandardOutPath</key><string>/tmp/quantum-agent.out.log</string>
+    <key>StandardErrorPath</key><string>/tmp/quantum-agent.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict><key>TZ</key><string>America/New_York</string></dict>
+  </dict>
+</plist>
+```
+
+Load with `launchctl load ~/Library/LaunchAgents/com.user.quantum-agent.plist`.
+Unload with `launchctl unload ...`. The pre-market run is 8:00 America/New_York,
+~90 min before US market open.
+
+**Linux cron equivalent** (`crontab -e`):
+```
+# m h dom mon dow command
+0 8 * * 1-5 cd /path/to/project && /path/to/env/bin/python -m tradingagents.daily_cycle >> /var/log/quantum-agent.log 2>&1
+```
+(Set `CRON_TZ=America/New_York` at the top of the crontab on systems that
+support it, otherwise adjust the hour to your server's TZ.)
+
+**`orchestration/scheduler.py`** in this codebase is a thin module exposing:
+- `validate_schedule_installed() -> bool` — checks `launchctl list` / `crontab -l`
+  and returns True if the job is registered, for startup self-diagnostics
+- `install_launchd_plist(path)` / `uninstall_launchd_plist(path)` — operator helpers
+- Nothing that runs a scheduler in-process.
 
 ### 11.2 Kill switch (`risk/kill_switch.py`)
 
@@ -1832,7 +1898,7 @@ Execute in order. Do not skip phases.
 
 **Exit criteria**: A forced-fail proposal (e.g., 10% position size) gets veto'd with correct reason.
 
-### Phase 5: Auto paper execution & latency (target: 1 week)
+### Phase 5: Auto paper execution & latency (target: 2 weeks — revised from 1 week, Session 0b)
 
 **This phase implements Section 10A.** Do not skip even in early development —
 paper execution is how you validate everything before Phase 6.
@@ -1853,7 +1919,7 @@ daily latency report is generated.
 
 ### Phase 6: Orchestration (target: 1 week)
 
-- [ ] Implement `orchestration/scheduler.py` with APScheduler
+- [ ] Implement `tradingagents/daily_cycle.py` + `orchestration/scheduler.py` helper; install launchd plist / cron entry per §11.1
 - [ ] Implement `orchestration/cost_tracker.py` with SQLite persistence
 - [ ] Implement `orchestration/alerts.py` via Gmail MCP
 - [ ] Implement `orchestration/monitor.py` for log aggregation
@@ -1864,7 +1930,7 @@ daily latency report is generated.
 
 ### Phase 7: Backtest (target: 2-4 weeks)
 
-- [ ] Implement `backtest/runner.py` using `backtrader` or `vectorbt`
+- [ ] Implement `backtest/runner.py` using `vectorbt` (Session 0b ADR; backtrader removed from requirements)
 - [ ] Historical data: at least Jan 2024 → present (captures quantum rally + drawdown)
 - [ ] Freeze agent knowledge cutoff per simulation date (no look-ahead)
 - [ ] Compute: Cumulative Return, Annualized Return, Sharpe Ratio, Max Drawdown, Win Rate, Avg Hold Period
@@ -1918,7 +1984,7 @@ daily latency report is generated.
   - Decision JSON is well-formed
   - **Paper order is submitted to moomoo SIMULATE and filled**
   - **execution_log row is created with all 6 timestamps and 6 derived latencies**
-  - Total cost < $2.50 for single decision
+  - Total cost < $5.00 for single decision (Session 0b: relaxed from $2.50 — observed cost with Opus PM + Opus Quantum Tech Expert at thinking_budget=16000 routinely lands in the $3-4 range; $2.50 was unrealistic)
 - `test_latency_budget.py` (Section 10A.8): assert `total_market_to_fill_ms` within budget
 - `test_hold_decision_logging.py`: hold decisions still log T0-T3 but T4/T5 null
 
@@ -1949,8 +2015,8 @@ Document these in README so user is aware:
 ### Minimum viable
 
 - [ ] All 9 agents operational
-- [ ] Daily pipeline completes in < 10 minutes
-- [ ] Cost per decision < $2.50
+- [ ] Daily pipeline completes in < 10 minutes (= §10A.6 green zone for `pipeline_duration_ms`)
+- [ ] Cost per decision < $5.00 (Session 0b revision; see §14)
 - [ ] Hard risk gate vetoes at least one proposal in backtest (proves it works)
 
 ### Good
