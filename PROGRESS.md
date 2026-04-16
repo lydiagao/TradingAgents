@@ -96,7 +96,7 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ---
 
-## Phase 5 — Auto paper execution & latency (target: 1 week)
+## Phase 5 — Auto paper execution & latency (target: 2 weeks — revised from 1 week in Session 0b ADR)
 
 - [ ] **P5-T1** Extend `memory/decision_log.py` with the full `execution_log` schema per §8.4 (6 timestamps + 6 derived latencies + slippage). Already partially done in P2-T17; this task completes and tests it. *Done*: `write_execution_log()` accepts all fields; NULL handling for hold + vetoed cases. *SPEC*: §8.4, §10A.3
 - [ ] **P5-T2** Thread T0-T5 through LangGraph state. T0/T1 emitted by MoomooClient at data fetch; T2 set at pipeline entry; T3 set at PM output; T4/T5 set in paper executor. No node mutates existing timestamps. *Done*: integration test asserts all 6 timestamps captured for a non-hold decision on IONQ. *SPEC*: §10A.5

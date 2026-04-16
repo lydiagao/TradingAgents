@@ -546,7 +546,7 @@ Integration test (test_full_pipeline_ionq.py — first integration test):
 - Assert 9 analyst outputs all Pydantic-valid
 - Assert Bull and Bear mention at least 3 of {tech, commercialization, valuation,
   regulatory, flow} by name
-- Cost budget: <$5 per run (raised from SPEC's $2.50 because reality > theory)
+- Cost budget: <$5 per run (per SPEC §14, relaxed from $2.50 in Session 0b ADR)
 
 Exit when test green, commit made, phase-3 tag applied.
 ```
@@ -690,11 +690,11 @@ Read PROGRESS tasks P6-T1 through P6-T7.
 
 Session goal: Wire the project up for unattended daily operation.
 
-Architectural decision (supersedes SPEC §11.1): use **system launchd** on
+Per SPEC §11.1 (updated in Session 0b ADR sync): use **system launchd** on
 macOS (not APScheduler in-process). Reason: if APScheduler shares a process
 with the pipeline, a pipeline crash kills the scheduler — SPOF. launchd +
 a single-shot `python -m tradingagents.daily_cycle` is simpler and
-independently recoverable.
+independently recoverable. SPEC §11.1 contains the full launchd plist.
 
 Cost tracker must enforce BOTH per-day AND per-cycle hard stops (Session 0a
 flagged per-cycle as missing). A single cycle running Opus + 9 agents can
@@ -733,8 +733,9 @@ Read PROGRESS tasks P7-T1 through P7-T4.
 Session goal: Implement the backtest framework. Correctness over speed —
 look-ahead bias is silent and will invalidate every metric.
 
-Decision (supersedes SPEC §2's "backtrader or vectorbt"): use **vectorbt**.
-Reasons: vectorized, Python-native, better maintained, simpler API.
+Per SPEC §2 (updated in Session 0b ADR sync): use **vectorbt**. Reasons:
+vectorized, Python-native, better maintained, simpler API. Backtrader was
+dropped from requirements.txt in Session 0b.
 
 Every code path that calls an agent must pass sim_date. Every RAG lookup
 the agent makes must use that sim_date to filter vector store retrieval.
