@@ -8,7 +8,8 @@
 >
 > **Revision notes**:
 > - **Section 4.8 hardened**: yfinance is now forbidden on the decision path. All live prices, IV, and order book data must come from moomoo real-time. Enforced via module-level import isolation and a CI guardrail test (Section 4.8.2). Hard Risk Gate now asserts `_source == "moomoo"` before evaluating.
-> - **Section 10A added**: Every non-hold decision must auto-submit a paper order to moomoo and log end-to-end latency from market tick to fill. Six timestamps are collected, six derived latencies are pre-computed. This makes backtests and live paper comparable, and makes pipeline performance regressions visible.
+> - **Section 10A added**: Every non-hold decision must auto-submit a paper order to moomoo and log end-to-end latency from market tick to fill. Six timestamps are collected, six derived latencies are pre-computed. Pipeline performance regressions become visible. Note: backtest path cannot capture T4/T5 (no real orders submitted), so only T0-T3 (data-staleness + pipeline-duration) are directly comparable between backtest and live paper.
+> - **Session 0a hardening** (see §13 for the full change list): (a) `claude-opus-4-7` → `claude-opus-4-6` — 4.7 does not exist. (b) Anthropic SDK calling convention corrected to `thinking={"type": "enabled", "budget_tokens": N}`; there is no `effort` parameter and no `"adaptive"` thinking type. (c) Embedding provider made explicit — Voyage AI (paid) or local `sentence-transformers`; Anthropic has no embedding API. (d) `agents/risk/` renamed to `agents/risk_debate/` to disambiguate from top-level `risk/`. (e) `dataflows/yfinance_client.py` removed — §4.8.2 mandates `dataflows/historical.py` as the sole yfinance home. (f) Reddit mandates OAuth via PRAW; unauthenticated fallback removed. (g) §4.8.2 guardrail now scans `execution/` as well. (h) `dataflows/__init__.py` uses lazy `get_client()` instead of module-import-time instantiation. (i) News/Sentiment output schemas now explicitly define `strategic_score`/`macro_score`. (j) Added §4.10 (graceful degradation policy), §8.5 (inter-agent Pydantic schema contracts), §8.2 (backtest `sim_date` filter baked into vector store retrieval), and `MoomooClient.wait_for_fill()` in §4.8.3.
 
 ---
 
@@ -20,7 +21,7 @@ A 9-layer multi-agent trading system specialized for quantum computing stocks (I
 
 ### Design principles
 
-1. **Model tiering for cost**: Different agents use different Claude models (Haiku 4.5 / Sonnet 4.6 Medium / Sonnet 4.6 High / Opus 4.7) based on cognitive load.
+1. **Model tiering for cost**: Different agents use different Claude models (Haiku 4.5 / Sonnet 4.6 Medium / Sonnet 4.6 High / Opus 4.6) based on cognitive load.
 2. **Free-only data sources**: No Bloomberg/Reuters/FT paid feeds. Everything via free RSS, free-tier APIs, SEC EDGAR, and public government sources.
 3. **Hard risk gate is code, not LLM**: Non-negotiable rules (position caps, loss limits) are implemented as deterministic Python checks, not agent discussions.
 4. **Stage-weighted scoring**: The same stock is scored differently depending on its maturity (pre-revenue vs. scaling).
@@ -187,18 +188,32 @@ Rationing: reserve 50/day for quantum pure-plays (10 per ticker), 30/day for mar
 https://news.google.com/rss/search?q={ticker}+quantum+computing
 ```
 
-### 4.5 Reddit (free JSON)
+### 4.5 Reddit (free, OAuth required)
 
 Subreddits:
 - `r/QuantumComputing` - domain signal
 - `r/wallstreetbets` - retail sentiment
 - `r/stocks`, `r/investing` - broader context
 
-```
-https://www.reddit.com/r/{subreddit}/search.json?q={query}&sort=new&t=day
+**Authentication is mandatory.** Since July 2023 Reddit has tightened
+unauthenticated API access to the point of effective unusability (quotas too
+small for any production pipeline, frequent 429s). Register a free developer
+app at `https://www.reddit.com/prefs/apps` and use `praw` with OAuth2:
+
+```python
+import praw
+reddit = praw.Reddit(
+    client_id=os.environ["REDDIT_CLIENT_ID"],
+    client_secret=os.environ["REDDIT_CLIENT_SECRET"],
+    user_agent=os.environ["REDDIT_USER_AGENT"],  # required, identifies the app
+)
+for submission in reddit.subreddit("QuantumComputing").new(limit=50):
+    ...
 ```
 
-Set User-Agent. Rate limit: 60 requests/minute unauthenticated. Prefer authenticated via PRAW for higher limits.
+Authenticated rate limit: 100 QPM per OAuth client (Reddit's current cap).
+Do not attempt to scrape `reddit.com/.../*.json` without OAuth — it will 429
+quickly and is against ToS.
 
 ### 4.6 Government contracts
 
@@ -243,31 +258,50 @@ Rationale:
 - Session state detection (pre-market / regular / after-hours)
 
 **yfinance permitted ONLY for:**
-- Historical OHLC for backtests (no live decision on this path)
-- Static fundamental snapshots (P/E, market cap) when EDGAR is not yet updated
-- Supplementary institutional holders summary (note: 45-day lag anyway)
+- Historical OHLC for backtests (no live decision on this path). Prefer
+  moomoo historical K-lines when available; yfinance remains as the fallback.
+- Nothing else. The earlier "static fundamentals" and "supplementary
+  institutional holders" carve-outs were removed in Session 0a hardening —
+  SEC EDGAR XBRL is authoritative for both and yfinance was only a tempting
+  backdoor that diluted the §4.8 guarantee.
 
 #### 4.8.2 Enforcement — module-level import isolation
 
-Organize `dataflows/` so that yfinance **cannot be accidentally called** from live-decision code:
+Organize `dataflows/` so that yfinance **cannot be accidentally called** from live-decision code. The live decision surface uses a **lazy client accessor**, not a module-import-time instantiation, so that (a) tests can import `tradingagents.dataflows` without opening a moomoo connection and (b) moomoo outages do not brick the whole process at import time:
 
 ```python
-# dataflows/__init__.py — live decision surface
+# dataflows/__init__.py — live decision surface (lazy)
+from __future__ import annotations
+from typing import Optional
 from .moomoo_client import MoomooClient
-_client = MoomooClient()
 
-# Public live API — these names are what decision code should import
-get_realtime_quote = _client.get_realtime_quote
-get_live_options_chain = _client.get_live_options_chain
-get_order_book = _client.get_order_book
-get_session_state = _client.get_session_state
+_client: Optional[MoomooClient] = None
 
-# Historical/analysis namespace — yfinance lives only here
-from . import historical
+def get_client() -> MoomooClient:
+    """Lazy singleton accessor. Raises clearly if moomoo is unreachable."""
+    global _client
+    if _client is None:
+        _client = MoomooClient()  # may raise ConnectionError; callers should handle
+    return _client
 
-# Developers must explicitly write `from dataflows import historical`
-# to touch yfinance. Code review should flag any such import
-# appearing in files under agents/, risk/, or scoring/.
+# Public live-decision API — decision code imports these wrappers, NOT the client
+def get_realtime_quote(ticker: str) -> dict:
+    return get_client().get_realtime_quote(ticker)
+
+def get_live_options_chain(ticker: str, expiration: str | None = None) -> dict:
+    return get_client().get_live_options_chain(ticker, expiration)
+
+def get_order_book(ticker: str, depth: int = 10) -> dict:
+    return get_client().get_order_book(ticker, depth)
+
+def get_session_state(ticker: str) -> str:
+    return get_client().get_session_state(ticker)
+
+# Historical/analysis namespace — yfinance lives only here, and must be
+# imported explicitly: `from dataflows import historical`.
+# Code review and the guardrail test below flag any such import appearing
+# in files under agents/, risk/, scoring/, orchestration/, or execution/.
+from . import historical  # noqa: E402,F401 — re-exported for explicit access
 ```
 
 ```python
@@ -276,17 +310,16 @@ import yfinance as yf
 
 def get_backtest_ohlc(ticker: str, period: str = "2y"):
     return yf.Ticker(ticker).history(period=period)
-
-def get_static_info(ticker: str):
-    return yf.Ticker(ticker).info
 ```
 
-**Guardrail test** (must be in `tests/unit/test_no_yfinance_on_hot_path.py`):
+**Guardrail test** (must be in `tests/unit/test_no_yfinance_on_hot_path.py`).
+Note: `FORBIDDEN_DIRS` now includes `execution/` so that `paper_executor.py`
+and future `live_executor.py` cannot quietly import yfinance:
 
 ```python
 import ast, pathlib
 
-FORBIDDEN_DIRS = ["agents", "risk", "scoring", "orchestration"]
+FORBIDDEN_DIRS = ["agents", "risk", "scoring", "orchestration", "execution"]
 
 def test_no_yfinance_import_on_decision_path():
     repo = pathlib.Path(__file__).parents[2] / "tradingagents"
@@ -303,7 +336,7 @@ def test_no_yfinance_import_on_decision_path():
     assert not violations, f"yfinance imported on decision path: {violations}"
 ```
 
-This test runs in CI on every commit. Any PR that imports yfinance outside `dataflows/historical.py` fails.
+This test runs in CI on every commit. Any PR that imports yfinance outside `dataflows/historical.py` fails. The guardrail only detects static imports; dynamic imports via `importlib.import_module("yfinance")` would slip through, but such code is unusual and easy to spot in review.
 
 #### 4.8.3 moomoo client interface
 
@@ -312,19 +345,47 @@ The `MoomooClient` must expose at minimum:
 ```python
 class MoomooClient:
     def get_realtime_quote(self, ticker: str) -> dict:
-        """<1s latency. Returns {price, bid, ask, volume, ts, _source: 'moomoo'}."""
-        
+        """<1s latency. Returns:
+        {
+          "price": float,         # last trade price
+          "bid": float, "ask": float, "volume": int,
+          "ts_exchange": str,     # ISO8601 UTC with ms — EXCHANGE tick time (T0)
+          "ts_received":  str,    # ISO8601 UTC with ms — when this process got the payload (T1)
+          "_source": "moomoo",
+        }
+        Both timestamps are required; `ts_exchange` is T0, `ts_received` is T1.
+        If moomoo returns only one of them, MoomooClient fills the other with
+        the best available equivalent and tags the payload with
+        `_ts_exchange_approximated: True` so downstream code can warn.
+        """
+
     def get_live_options_chain(self, ticker: str, expiration: str | None = None) -> dict:
         """Live IV, OI, greeks. Required for risk gate IV check."""
-        
+
     def get_order_book(self, ticker: str, depth: int = 10) -> dict:
         """Top N bid/ask levels. Used by Trader for slippage-aware sizing."""
-        
+
     def get_session_state(self, ticker: str) -> str:
         """One of: 'pre_market' | 'regular' | 'after_hours' | 'closed'."""
-        
-    def place_order(self, ticker: str, side: str, qty: int, order_type: str, **kwargs) -> dict:
-        """Submit order. Returns order_id and status."""
+
+    def get_historical_klines(self, ticker: str, interval: str, start: str, end: str) -> list[dict]:
+        """Preferred historical OHLC source. Only fall back to yfinance
+        (via dataflows.historical.get_backtest_ohlc) if moomoo cannot serve
+        the requested range."""
+
+    def place_order(self, ticker: str, side: str, qty: int, order_type: str,
+                    trd_env: str = "SIMULATE", **kwargs) -> dict:
+        """Submit order. `trd_env='SIMULATE'` for paper, `'REAL'` for live.
+        Returns {order_id, status, ts_submitted, _source: 'moomoo'}."""
+
+    def wait_for_fill(self, order_id: str, timeout_sec: int = 10) -> dict:
+        """Block until the order is filled, rejected, cancelled, or timeout.
+        Returns {
+          status: 'filled'|'partial'|'rejected'|'cancelled'|'timeout',
+          fill_price: float|None, fill_qty: int, ts_filled: str|None,
+          _source: 'moomoo',
+        }. On timeout, status is 'timeout' and callers MUST NOT retry
+        blindly — decide whether to cancel or keep the order live."""
 ```
 
 Every return dict from this client must include `_source: "moomoo"` so downstream code (especially Hard Risk Gate) can assert it.
@@ -337,6 +398,50 @@ Extract from SEC EDGAR 13F filings directly (not paid services like WhaleWisdom)
 - Quarterly snapshots
 - 45-day reporting lag
 - Parse `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=13F-HR` for the latest
+
+### 4.10 Graceful degradation policy
+
+Data sources fail. The pipeline must have explicit behavior for each source.
+
+Each source falls into one of three **criticality tiers**. The tier determines
+what the pipeline does when that source is unavailable (timeout, 5xx, empty
+response, parse error, rate limit, or authentication failure).
+
+| Tier | Sources | Failure behavior |
+|------|---------|------------------|
+| **CRITICAL** (pipeline halts on failure) | moomoo real-time quote, moomoo options chain, moomoo order book, moomoo session state | Halt the pipeline for the affected ticker. Emit a HALT alert. Do NOT substitute yfinance or any other source — that would violate §4.8. The ticker is skipped for the current cycle; other tickers continue. |
+| **IMPORTANT** (degrade score, keep running) | SEC EDGAR, NewsAPI, quantum RSS feeds, Reddit (PRAW), SAM.gov | The affected agent receives a `data_incomplete: True` flag and produces a partial output with `confidence: "low"`. Scoring engine applies a confidence discount (multiply that dimension's weight by 0.5). PM prompt receives the flag in context and is instructed to prefer `hold`. |
+| **OPTIONAL** (silently skip) | USPTO, DARPA news scrape, arXiv | Agent proceeds without that input. No alert. Log at DEBUG level. |
+
+**Minimum viable data set** per cycle (below this, the pipeline outputs `hold` for the ticker regardless of any agent opinion):
+- moomoo real-time quote ✅
+- moomoo session state ✅
+- At least one of: SEC EDGAR latest 10-Q (for stage detection) OR valid financials cache <30 days old
+
+**Implementation sketch** (`dataflows/retry.py`, shared helper):
+```python
+from dataclasses import dataclass
+
+@dataclass
+class FetchResult:
+    ok: bool
+    data: dict | None
+    source: str
+    tier: str              # 'critical' | 'important' | 'optional'
+    error: str | None = None
+
+def fetch_with_policy(source_name: str, fetcher, tier: str, retries: int = 2) -> FetchResult:
+    """One retry with exponential backoff, then give up per policy."""
+    # ... (implementation)
+```
+
+Each data-source client in `dataflows/` uses this helper. Agents receive
+`FetchResult` objects, not bare dicts, so they can branch on `ok`.
+
+**Acceptance test** (`tests/unit/test_graceful_degradation.py`):
+- All CRITICAL sources mocked to fail → pipeline halts for ticker, alert fired
+- All IMPORTANT sources mocked to fail → pipeline completes, decision is `hold`, all affected dimension weights halved
+- All OPTIONAL sources mocked to fail → pipeline completes, decision unchanged from the all-sources-working baseline
 
 ---
 
@@ -356,31 +461,33 @@ tradingagents/
 │   │   ├── fundamentals.py
 │   │   ├── valuation_health.py       # NEW
 │   │   ├── commercialization.py      # NEW
-│   │   ├── quantum_tech_expert.py    # NEW (Opus 4.7)
+│   │   ├── quantum_tech_expert.py    # NEW (Opus 4.6, high thinking budget)
 │   │   └── regulatory_policy.py      # NEW
 │   ├── researchers/
 │   │   ├── bull.py
 │   │   └── bear.py
-│   ├── risk/
+│   ├── risk_debate/                  # RENAMED from risk/ — disambiguates from top-level risk/ (hard gate)
 │   │   ├── risky.py
 │   │   ├── neutral.py
 │   │   └── safe.py
 │   ├── trader.py
 │   └── portfolio_manager.py
 ├── dataflows/
+│   ├── __init__.py                   # NEW: lazy get_client() surface (see §4.8.2)
 │   ├── rss_quantum.py                # NEW: quantum media feeds
 │   ├── arxiv_client.py               # NEW
 │   ├── sec_edgar.py                  # NEW: 10-Q, 10-K, 13F
 │   ├── newsapi_client.py             # NEW: free tier
-│   ├── reddit_client.py              # NEW
+│   ├── reddit_client.py              # NEW: PRAW with OAuth (no unauth fallback)
 │   ├── sam_gov.py                    # NEW: gov contracts
 │   ├── uspto_client.py               # NEW
 │   ├── moomoo_client.py              # NEW: adapts moomoo OpenAPI
-│   └── yfinance_client.py
+│   └── historical.py                 # NEW: the ONLY module allowed to import yfinance (§4.8.2)
 ├── memory/
-│   ├── vector_store.py               # NEW: ChromaDB wrapper
+│   ├── vector_store.py               # NEW: ChromaDB wrapper, sim_date-aware retrieval (§8.2)
 │   ├── knowledge_base.py             # NEW: quantum domain KB
-│   └── decision_log.py               # NEW: historical decisions + execution_log
+│   ├── decision_log.py               # NEW: historical decisions + execution_log
+│   └── schemas.py                    # NEW: Pydantic models for agent I/O (§8.5)
 ├── execution/
 │   ├── paper_executor.py             # NEW: auto paper orders, latency capture (10A)
 │   └── live_executor.py              # NEW: Phase 9+ only, guarded by ENVIRONMENT
@@ -420,50 +527,92 @@ The baseline TradingAgents framework only has two tiers (`deep_think_llm`, `quic
 ### `tradingagents/config/model_config.py`
 
 ```python
+# Each entry pins a model ID and an optional extended-thinking budget (tokens).
+# The Anthropic SDK exposes extended thinking as
+#   thinking={"type": "enabled", "budget_tokens": N}
+# There is no "effort" parameter and no "adaptive" thinking type in the public
+# SDK. Do not invent one. If you need more reasoning, raise budget_tokens.
+
 AGENT_MODEL_MAP = {
-    # Layer 3 - Market & flow analysts (Haiku for structured data)
-    "technical":          {"model": "claude-haiku-4-5-20251001",   "effort": None},
-    "news":               {"model": "claude-sonnet-4-6",            "effort": "medium"},
-    "sentiment":          {"model": "claude-haiku-4-5-20251001",   "effort": None},
-    "flow_technicals":    {"model": "claude-haiku-4-5-20251001",   "effort": None},
+    # Layer 3 - Market & flow analysts (Haiku for structured data, no thinking)
+    "technical":           {"model": "claude-haiku-4-5-20251001",  "thinking_budget": 0},
+    "news":                {"model": "claude-sonnet-4-6",          "thinking_budget": 4000},
+    "sentiment":           {"model": "claude-haiku-4-5-20251001",  "thinking_budget": 0},
+    "flow_technicals":     {"model": "claude-haiku-4-5-20251001",  "thinking_budget": 0},
 
-    # Layer 3 - Financial & business (Sonnet High for reasoning)
-    "fundamentals":       {"model": "claude-haiku-4-5-20251001",   "effort": None},
-    "valuation_health":   {"model": "claude-sonnet-4-6",            "effort": "high"},
-    "commercialization":  {"model": "claude-sonnet-4-6",            "effort": "high"},
+    # Layer 3 - Financial & business (Sonnet with thinking for reasoning)
+    "fundamentals":        {"model": "claude-haiku-4-5-20251001",  "thinking_budget": 0},
+    "valuation_health":    {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
+    "commercialization":   {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
 
-    # Layer 3 - Domain specialized
-    "quantum_tech_expert": {"model": "claude-opus-4-7",             "effort": "high"},
-    "regulatory_policy":   {"model": "claude-sonnet-4-6",           "effort": "medium"},
+    # Layer 3 - Domain specialized (Opus with high thinking)
+    "quantum_tech_expert": {"model": "claude-opus-4-6",            "thinking_budget": 16000},
+    "regulatory_policy":   {"model": "claude-sonnet-4-6",          "thinking_budget": 4000},
 
     # Layer 4 - Researchers
-    "bull_researcher":    {"model": "claude-sonnet-4-6",            "effort": "high"},
-    "bear_researcher":    {"model": "claude-sonnet-4-6",            "effort": "high"},
+    "bull_researcher":     {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
+    "bear_researcher":     {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
 
-    # Layer 5 - Trader + Risk
-    "trader":             {"model": "claude-sonnet-4-6",            "effort": "high"},
-    "risky_analyst":      {"model": "claude-sonnet-4-6",            "effort": "high"},
-    "neutral_analyst":    {"model": "claude-sonnet-4-6",            "effort": "high"},
-    "safe_analyst":       {"model": "claude-sonnet-4-6",            "effort": "high"},
+    # Layer 5 - Trader + Risk debate
+    "trader":              {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
+    "risky_analyst":       {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
+    "neutral_analyst":     {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
+    "safe_analyst":        {"model": "claude-sonnet-4-6",          "thinking_budget": 8000},
 
-    # Layer 7 - Portfolio manager
-    "portfolio_manager":  {"model": "claude-opus-4-7",              "effort": "high"},
+    # Layer 7 - Portfolio manager (Opus with high thinking)
+    "portfolio_manager":   {"model": "claude-opus-4-6",            "thinking_budget": 16000},
 }
 
 def get_model_config(agent_name: str) -> dict:
     return AGENT_MODEL_MAP[agent_name]
+
+def build_thinking_param(budget: int) -> dict | None:
+    """Return the `thinking` kwarg for the Anthropic SDK, or None to disable."""
+    if budget and budget > 0:
+        return {"type": "enabled", "budget_tokens": budget}
+    return None
 ```
 
 ### Modify `graph/trading_graph.py`
 
-Locate where agents are instantiated (in `setup.py` or similar). For each agent, call `get_model_config(agent_name)` and pass both model and effort to `ChatAnthropic` or the native Anthropic SDK call.
+Locate where agents are instantiated (in `setup.py` or similar). For each agent,
+call `get_model_config(agent_name)` and instantiate the LLM client with the
+correct model ID and thinking parameter.
 
-**Important**: `effort` parameter for Sonnet 4.6 and Opus 4.7 uses adaptive thinking. Pass as:
+**Preferred (native Anthropic SDK)**:
 ```python
-thinking={"type": "adaptive"}
-# and
-extra_body={"effort": "high"}  # or via native SDK output_config
+from anthropic import Anthropic
+client = Anthropic()
+cfg = get_model_config("quantum_tech_expert")
+response = client.messages.create(
+    model=cfg["model"],
+    max_tokens=4096,
+    thinking=build_thinking_param(cfg["thinking_budget"]),  # None or {"type":"enabled",...}
+    messages=[...],
+)
 ```
+
+**LangChain wrapper (only if you stay inside the LangGraph inheritance from TradingAgents)**:
+```python
+from langchain_anthropic import ChatAnthropic
+cfg = get_model_config("quantum_tech_expert")
+llm = ChatAnthropic(
+    model=cfg["model"],
+    max_tokens=4096,
+    thinking=build_thinking_param(cfg["thinking_budget"]),
+)
+```
+
+**Forbidden patterns** (do NOT use — these are not real API fields):
+```python
+# WRONG — no "effort" parameter exists on the Anthropic SDK
+extra_body={"effort": "high"}
+# WRONG — no "adaptive" thinking type
+thinking={"type": "adaptive"}
+```
+
+If the installed `anthropic` SDK version is older than the extended-thinking
+release, upgrade it; do not work around it with speculative kwargs.
 
 ---
 
@@ -487,7 +636,7 @@ def create_agent(llm, tools):
 
 Below are the full system prompts for the most novel agents. The traditional 4 agents (Technical, News, Sentiment, Fundamentals) inherit TradingAgents defaults — update ticker lists to the quantum universe.
 
-### 7.1 Quantum Tech Expert (Opus 4.7, high effort)
+### 7.1 Quantum Tech Expert (Opus 4.6, high thinking budget)
 
 ```
 You are a quantum computing industry technical expert advising a trading desk.
@@ -731,9 +880,9 @@ stocks. You use structured data, not narrative.
 Inputs:
 - 13F institutional holdings (from SEC EDGAR, quarterly with 45-day lag)
 - Short interest reports (FINRA, bi-monthly)
-- Options open interest, put/call ratio, implied volatility (from yfinance)
-- Trading volume vs 20-day average
-- Relative strength vs QQQ and sector ETFs
+- Options open interest, put/call ratio, and implied volatility — **from moomoo `get_live_options_chain` only** (§4.8.1 forbids yfinance for live IV)
+- Trading volume vs 20-day average — **from moomoo historical K-lines** (§4.8.3 `get_historical_klines`)
+- Relative strength vs QQQ and sector ETFs — same source
 
 For each stock, report:
 
@@ -776,9 +925,29 @@ Output format (JSON):
 Inherit the TradingAgents default prompts. Make these changes:
 
 - **Technical**: use moomoo K-line data exclusively (see Section 4.8.1). yfinance is forbidden for any price used in a buy/sell signal.
-- **News**: add quantum media feeds as primary source, NewsAPI as secondary
-- **Sentiment**: add r/QuantumComputing to the subreddit list
-- **Fundamentals**: add RPO, cash runway, and qubit count as explicit fields to extract
+- **News**: add quantum media feeds as primary source, NewsAPI as secondary. Output schema (required — the Scoring Engine in §9.3 depends on `strategic_score`):
+  ```json
+  {
+    "headline_summary": "2-3 sentences",
+    "strategic_score": 0-100,
+    "recent_events": [
+      {"event": "...", "impact": "positive|neutral|negative", "ts": "ISO8601"}
+    ],
+    "reasoning": "..."
+  }
+  ```
+  `strategic_score` = Agent's assessment of *strategic action momentum* (new contracts, partnerships, material 8-Ks). 50 = neutral.
+- **Sentiment**: add r/QuantumComputing to the subreddit list. Output schema (required — Scoring Engine depends on `macro_score`):
+  ```json
+  {
+    "sentiment_bias": "bullish|neutral|bearish",
+    "macro_score": 0-100,
+    "retail_heat": "high|medium|low",
+    "reasoning": "..."
+  }
+  ```
+  `macro_score` = macro/sector rotation tailwind for quantum-exposed equities (rates, AI cycle, risk-on vs risk-off). 50 = neutral.
+- **Fundamentals**: add RPO, cash runway, and qubit count as explicit fields to extract.
 
 ### 7.7 Researchers, Trader, Risk team, Portfolio Manager
 
@@ -839,11 +1008,38 @@ def fetch_all_feeds() -> Iterator[dict]:
 
 ### 8.2 Vector store (`memory/vector_store.py`)
 
-Use ChromaDB with a single collection `market_intel`. Metadata fields: `source`, `tickers`, `published_at`, `doc_type` (news | filing | paper | contract).
+Use ChromaDB with a single collection `market_intel`. Metadata fields: `source`, `tickers`, `published_at` (ISO8601 UTC), `doc_type` (news | filing | paper | contract).
 
-Embeddings: use Anthropic's embedding API or sentence-transformers locally (`all-MiniLM-L6-v2` for speed).
+**Embeddings** (Anthropic has no embedding API — pick one):
+- **Default: local `sentence-transformers`** with `all-MiniLM-L6-v2` (384-dim, CPU-fast, zero cost). Adequate for the volume of docs in this project.
+- **Optional: Voyage AI** (`voyage-3` or `voyage-large-2`) via the `voyageai` Python client, if local quality proves insufficient during Phase 7 backtest. Paid per token. Requires `VOYAGE_API_KEY` in `.env`.
+- Do NOT claim "Anthropic embedding API" — it does not exist.
 
 Retention: keep rolling 180 days, purge older.
+
+**Backtest `sim_date` discipline (CRITICAL — prevents look-ahead bias)**:
+
+Every retrieval call that is invoked from the backtest runner must pass a
+`sim_date` argument. The retrieval layer enforces `published_at <= sim_date`
+via a Chroma `where` filter:
+
+```python
+def retrieve(query: str, n: int = 10, sim_date: datetime | None = None,
+             tickers: list[str] | None = None) -> list[dict]:
+    where: dict = {}
+    if sim_date is not None:
+        where["published_at"] = {"$lte": sim_date.isoformat()}
+    if tickers:
+        where["tickers"] = {"$in": tickers}
+    return collection.query(query_texts=[query], n_results=n, where=where or None)
+```
+
+The backtest runner (§Phase 7) threads `sim_date` through agent calls so that
+every RAG lookup honors it. A guardrail test (`tests/backtest/test_no_lookahead.py`)
+spot-checks this by asserting that querying at `sim_date = 2024-06-01` never
+returns documents with `published_at > 2024-06-01`.
+
+In live mode `sim_date=None`, which means "no cutoff" — the filter is skipped.
 
 ### 8.3 Knowledge base (`memory/knowledge_base.py`)
 
@@ -928,6 +1124,93 @@ CREATE TABLE outcomes (
 ```
 
 Feed outcomes back to the vector store as learning signal for future cycles.
+
+### 8.5 Inter-agent schema contracts (`memory/schemas.py`)
+
+Every agent that produces structured JSON must have a **Pydantic model** in
+`memory/schemas.py` that matches the JSON spec in §7. Each agent node in the
+LangGraph pipeline **validates its own output** with `Model.model_validate(...)`
+before handing off downstream. Validation failures are caught and surfaced
+as `data_incomplete: True` (per §4.10 degradation policy) rather than raising
+into the graph — one malformed output from one agent must not kill the cycle.
+
+```python
+# memory/schemas.py
+from typing import Literal
+from pydantic import BaseModel, Field
+
+class QuantumTechOutput(BaseModel):
+    tech_score: int = Field(ge=0, le=100)
+    position_vs_peers: Literal["leader", "competitive", "laggard"]
+    roadmap_credibility: Literal["high", "medium", "low"]
+    key_risks: list[str]
+    time_to_advantage: str
+    reasoning: str
+
+class CommercializationOutput(BaseModel):
+    commercialization_score: int = Field(ge=0, le=100)
+    score_delta_this_cycle: int = Field(ge=-10, le=10)
+    dimensions: dict[str, int]
+    recent_signals: list[dict]
+    reasoning: str
+
+class ValuationHealthOutput(BaseModel):
+    financial_health_score: int = Field(ge=0, le=100)
+    valuation_tier: Literal["cheap", "fair", "rich", "bubble"]
+    runway_quarters: int
+    dilution_probability_12m: float = Field(ge=0.0, le=1.0)
+    red_flags: list[str]
+    reasoning: str
+
+class RegulatoryPolicyOutput(BaseModel):
+    policy_score: int = Field(ge=0, le=100)
+    tailwinds: list[str]
+    headwinds: list[str]
+    pending_catalysts: list[dict]
+    reasoning: str
+
+class FlowTechnicalsOutput(BaseModel):
+    flow_score: int = Field(ge=0, le=100)
+    positioning_bias: Literal["bullish", "neutral", "bearish"]
+    squeeze_risk: Literal["high", "medium", "low"]
+    key_observations: list[str]
+
+class NewsOutput(BaseModel):
+    headline_summary: str
+    strategic_score: int = Field(ge=0, le=100)
+    recent_events: list[dict]
+    reasoning: str
+
+class SentimentOutput(BaseModel):
+    sentiment_bias: Literal["bullish", "neutral", "bearish"]
+    macro_score: int = Field(ge=0, le=100)
+    retail_heat: Literal["high", "medium", "low"]
+    reasoning: str
+```
+
+**Enforcement pattern** (in each agent node):
+```python
+from pydantic import ValidationError
+from tradingagents.memory.schemas import QuantumTechOutput
+
+def quantum_tech_node(state: dict) -> dict:
+    raw_json = call_llm(...)  # LLM's structured output
+    try:
+        parsed = QuantumTechOutput.model_validate_json(raw_json)
+        return {"quantum_tech": parsed.model_dump(), "data_incomplete": False}
+    except ValidationError as e:
+        log.warning(f"quantum_tech validation failed: {e}")
+        return {"quantum_tech": None, "data_incomplete": True}
+```
+
+Scoring Engine (§9.3) reads only validated outputs, so its `.get(..., 50)`
+fallbacks hit only when `data_incomplete is True`. Scoring also multiplies
+that dimension's weight by 0.5 when `data_incomplete is True` (per §4.10).
+
+**Unit test** (`tests/unit/test_schemas.py`):
+- Golden JSON fixture per agent validates.
+- Mutated fixture (missing key, out-of-range value, wrong enum literal)
+  fails validation with a clear error.
 
 ---
 
@@ -1405,11 +1688,14 @@ Track Anthropic API usage per run. Alert if single-day spend exceeds a threshold
 DAILY_COST_ALERT_USD = 30
 DAILY_COST_HARD_STOP_USD = 50
 
-# Anthropic pricing as of Apr 2026 (per million tokens)
+# Anthropic pricing (per million tokens).
+# VERIFY AGAINST https://www.anthropic.com/pricing BEFORE PRODUCTION USE —
+# these values drive the daily-cost circuit breaker, and a 3x miss on Opus
+# pricing would defeat DAILY_COST_HARD_STOP_USD entirely.
 PRICING = {
-    "claude-haiku-4-5-20251001":    {"input": 1.0, "output": 5.0},
-    "claude-sonnet-4-6":            {"input": 3.0, "output": 15.0},
-    "claude-opus-4-7":              {"input": 5.0, "output": 25.0},
+    "claude-haiku-4-5-20251001":    {"input": 1.0,  "output": 5.0},
+    "claude-sonnet-4-6":            {"input": 3.0,  "output": 15.0},
+    "claude-opus-4-6":              {"input": 15.0, "output": 75.0},  # Opus tier pricing — verify current rate
 }
 
 def track_call(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -1618,7 +1904,9 @@ daily latency report is generated.
 - `test_hard_gate.py`: cover every veto and halt path, including the new `stale_data_rejected_not_from_moomoo` veto.
 - `test_scoring_engine.py`: verify stage detection thresholds and weight application.
 - `test_rss_quantum.py`: mock feedparser response, verify deduplication.
-- **`test_no_yfinance_on_hot_path.py`** (CRITICAL — enforces Section 4.8.1): AST-scans `agents/`, `risk/`, `scoring/`, `orchestration/` and fails if any file imports yfinance. See Section 4.8.2 for implementation.
+- **`test_no_yfinance_on_hot_path.py`** (CRITICAL — enforces Section 4.8.1): AST-scans `agents/`, `risk/`, `scoring/`, `orchestration/`, and `execution/` and fails if any file imports yfinance. See Section 4.8.2 for implementation.
+- **`test_graceful_degradation.py`** (enforces §4.10): simulates failure of CRITICAL / IMPORTANT / OPTIONAL tier sources and asserts correct pipeline behavior per tier.
+- **`test_schemas.py`** (enforces §8.5): golden + mutated JSON fixtures per agent, asserting Pydantic validation catches malformed LLM output.
 - `test_moomoo_source_tag.py`: verify `MoomooClient` return dicts always include `_source: "moomoo"`.
 
 ### Integration tests (`tests/integration/`)
@@ -1724,12 +2012,12 @@ Phases 1-4 can be largely autonomous. Phase 5 onward requires operational access
     "defaultMode": "acceptEdits"
   },
   "env": {
-    "ANTHROPIC_MODEL": "claude-opus-4-7"
+    "ANTHROPIC_MODEL": "claude-opus-4-6"
   }
 }
 ```
 
-Use `claude --effort max` when working on the Quantum Tech Expert agent — its prompt design benefits from deepest reasoning.
+When iterating on the Quantum Tech Expert agent prompt, start Claude Code with Opus 4.6 so prompt-design reasoning has the budget it needs. There is no `--effort max` flag; the equivalent is simply choosing Opus plus (in code) raising `thinking_budget` in `AGENT_MODEL_MAP`.
 
 ---
 
