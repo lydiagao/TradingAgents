@@ -15,7 +15,7 @@
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **最近更新** | 2026-04-16 UTC |
-| **最近 commit** | `15d8a8f` (session plan baseline) |
+| **最近 commit** | `c06a59a` (add CLAUDE.md + TASKS.md) |
 
 ### 状态图例
 
