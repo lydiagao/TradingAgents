@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 9（P1-T1 → P1-T9）|
-| **完成率 (active)** | 15.8 % (9/57) |
+| **已完成** | 10（P1-T1 → P1-T10）|
+| **完成率 (active)** | 17.5 % (10/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -54,7 +54,11 @@
 - [x] **P1-T9** 创建 `tradingagents/agents/_runner.py`（`run_claude(agent_name, prompt, schema)` CLI wrapper）✅
   > **范围收窄说明**：upstream agents 用 `llm.bind_tools(...)` 做 market data 工具调用。我们的 CLI 路径用 `--tools ""` 禁所有工具，设计是"Python 侧拉数据 → 塞 prompt → CLI 只推理"。深度改写 `graph/setup.py` 替换所有 upstream agent 需要 emulate bind_tools，超出 Phase 1 范围；这项工作挪到 **Phase 3**（§7.6/§7.7 本来就要重写所有 agent）。
   > Phase 1 P1-T9 的验收：`run_claude` 端到端可用。已验证：✅ plain text 调用、✅ schema 模式（发现 CLI 用 `structured_output` 字段而非 `result`，已 pin）、✅ raw wrapper 返回、✅ UnknownAgentError 路径。
-- [~] **P1-T10** `tests/unit/test_model_config.py`（覆盖 16 个 agent key + `build_cli_args` 输出 + `run_claude` mock）
+- [x] **P1-T10** `tests/unit/test_model_config.py` ✅ — 75 tests all green (0.03s)
+  > TestAgentModelMap (16 keys / valid models / no opus-4-7)
+  > TestGetModelConfig (copy / UnknownAgentError)
+  > TestBudgetToEffort (10 parametrized boundary values)
+  > TestBuildCliArgs (model / effort / tools / schema / permission / extra_args / all 16 agents / error path)
 - [ ] **P1-T11** Baseline 跑 → decision JSON。**原计划受 P1-T9 收窄影响**：`python main.py` 走 upstream pipeline 仍需 `ANTHROPIC_API_KEY`（因为 upstream agents 离不开 bind_tools）。A-Strict 下的 P1-T11 改为"mini baseline"：用 `run_claude("portfolio_manager", <NVDA 数据 prompt>, schema=decision_schema)` 走一遍 CLI 链路，产出 decision JSON；完整 upstream pipeline 的替换 Phase 3 完成。
 
 **Session 01 Exit**: P1-T11 绿灯 → `feat(P1): scaffold + per-agent model config` → 切换到 Session 02
