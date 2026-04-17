@@ -1,0 +1,27 @@
+# Quantum Trading Agent — additions on top of upstream TradingAgents deps
+# (ADR-2026-04-16: `anthropic` / `langchain-anthropic` / `vectorbt` / `backtrader`
+#  are NOT listed here. Upstream still pulls langchain-anthropic via pyproject.toml
+#  — we simply don't use it in new code. Vectorbt / backtrader are Phase 7 [DEFERRED].)
+#
+# Deps already provided by upstream pyproject.toml (no need to repeat):
+#   langgraph, pandas, requests, yfinance, beautifulsoup4 (via parsel),
+#   httpx (transitive), pydantic, sqlalchemy (transitive)
+#
+# Phase 2+ dependencies (may defer-install until Phase 2 start if install time is a pain):
+
+# Memory layer (§8.2, §8.3)
+chromadb
+sentence-transformers   # 拉 torch，~600MB；Phase 2 才真用，Phase 1 装为满足 P1-T4 exit 条件
+
+# Data sources (§4)
+feedparser              # §4.1 RSS
+sec-edgar-api           # §4.3 SEC EDGAR
+praw                    # §4.5 Reddit OAuth
+
+# Config / logging
+python-dotenv           # §12 .env
+loguru                  # §2
+
+# Test
+pytest
+pytest-asyncio
