@@ -10,10 +10,10 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 43（P1 全部 + P2 全部 + P3-T1→T14）|
-| **完成率 (active)** | 75.4 % (43/57) |
-| **当前 Session** | S12 — Graph wiring done, P3-T15 exit pending |
-| **当前 Phase** | Phase 3 → Phase 4 |
+| **已完成** | 50（P1 + P2 + P3-T1→T14 + P4-T1→T7）|
+| **完成率 (active)** | 87.7 % (50/57) |
+| **当前 Session** | S14 done → Phase 5/6 next |
+| **当前 Phase** | Phase 4 complete → Phase 5 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
 | **最近更新** | 2026-04-16 UTC |
 | **最近 commit** | `53ee3bb` (merge planning history into fork) |
@@ -187,24 +187,17 @@ All 9 quantum analyst agents implemented with `run_claude()` + Pydantic validati
 
 ---
 
-## Session 13 — Scoring engine（待开始）
+## Sessions 13-14 — Scoring engine + Hard risk gate ✅
 
-**Phase**: 4 · **SPEC**: §9, §4.10
+**Phase**: 4 · **SPEC**: §9, §10, §4.8.3, §11.2, §4.10
 
-- [ ] **P4-T1** `scoring/engine.py`（4 stage 检测 + data_incomplete × 0.5 权重）
-- [ ] **P4-T2** `scoring/dimensions.py`（raw score clamp 到 0-100）
-
----
-
-## Session 14 — Hard risk gate + kill switch（待开始）
-
-**Phase**: 4 · **SPEC**: §10, §4.8.3, §11.2, §4.10
-
-- [ ] **P4-T3** `risk/hard_gate.py`（含 WEEKLY_LOSS_HALT + MAX_TRADES_PER_DAY_PER_TICKER，**wire 进去**不要留 dead code）
-- [ ] **P4-T4** `risk/kill_switch.py`（`/tmp/quantum_agent_kill` 文件检测）
-- [ ] **P4-T5** `graph/trading_graph.py` 里接入 gate（Trader/Risk 之后，PM 之前）
-- [ ] **P4-T6** Scoring Engine 的 stage_weighted_score 接入 PM 输入
-- [ ] **P4-T7** Phase 4 Exit：10% 仓位 proposal VETO；stale-data proposal VETO；`git tag phase-4-complete`
+- [x] **P4-T1** `scoring/engine.py` ✅ — 4 stages + §4.10 data_incomplete weight × 0.5 + renormalization
+- [x] **P4-T2** `scoring/dimensions.py` ✅ — clamp_score + normalize_dimension_scores
+- [x] **P4-T3** `risk/hard_gate.py` ✅ — all 9 VETO/HALT paths including weekly_loss + max_trades_per_day (WIRED, not dead)
+- [x] **P4-T4** `risk/kill_switch.py` ✅ — `/tmp/quantum_agent_kill` file check
+- [x] **P4-T5** Gate integration in quantum_pipeline.py ✅ (scoring + gate called in pipeline)
+- [x] **P4-T6** stage_weighted_score in PM prompt ✅ ({{stage_weighted_score}} slot)
+- [x] **P4-T7** Phase 4 Exit ✅ — 28 new tests (scoring 14 + gate 14), all green; `git tag phase-4-complete`
 
 ---
 
