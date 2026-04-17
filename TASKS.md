@@ -15,7 +15,7 @@
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **最近更新** | 2026-04-16 UTC |
-| **最近 commit** | `c06a59a` (add CLAUDE.md + TASKS.md) |
+| **最近 commit** | `eefbfcf` (方向修正 — Agent SDK 不走订阅) |
 
 ### 状态图例
 
