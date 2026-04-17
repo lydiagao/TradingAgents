@@ -582,21 +582,32 @@ AGENT_MODEL_MAP = {
 def get_model_config(agent_name: str) -> dict:
     return AGENT_MODEL_MAP[agent_name]
 
-def build_cli_args(agent_name: str, prompt_path: str, schema_path: str | None = None) -> list[str]:
+def build_cli_args(agent_name: str, *, schema: dict | None = None,
+                   allow_tools: bool = False) -> list[str]:
     """
-    构造 `claude -p` CLI 调用参数列表。
-    - prompt_path: 本次 prompt 文件路径（prompt 通过 stdin 或 -p 字符串传）
-    - schema_path: 可选 JSON Schema 路径（structured output）
-    thinking_budget > 0 时追加 `--thinking-budget N`（在 Phase 1 首次实跑时验证 CLI flag 名，如与此不符则 pin 正确写法）。
+    构造 `claude -p` CLI 调用参数列表。prompt 通过 subprocess stdin 传入。
+    - schema: 可选 JSON Schema dict → `--json-schema '<inline json>'`
+    - allow_tools: False 时加 `--tools ""` 禁用所有 built-in 工具（agent 从 prompt 吃数据）
     """
-    cfg = AGENT_MODEL_MAP[agent_name]
-    args = ["claude", "-p", "--output-format", "json", "--model", cfg["model"]]
-    if cfg["thinking_budget"] > 0:
-        args += ["--thinking-budget", str(cfg["thinking_budget"])]
-    if schema_path:
-        args += ["--json-schema", schema_path]
+    cfg = get_model_config(agent_name)
+    args = ["claude", "-p", "--output-format", "json",
+            "--model", cfg["model"],
+            "--permission-mode", "bypassPermissions"]
+    effort = _budget_to_effort(cfg["thinking_budget"])  # 0 -> None; 1-4k medium; 4-8k high; 8-16k xhigh; >16k max
+    if effort is not None:
+        args += ["--effort", effort]
+    if not allow_tools:
+        args += ["--tools", ""]
+    if schema is not None:
+        args += ["--json-schema", json.dumps(schema, separators=(",",":"))]
     return args
 ```
+
+**CLI flag findings pinned during 2026-04-16 P1-T5 probe**（更新 ADR assumption list）：
+- `--effort <low|medium|high|xhigh|max>` **替代** `--thinking-budget N` —— CLI 无 token 级 flag；token 预算映射到 effort 分级（见 `_budget_to_effort`）
+- `--permission-mode bypassPermissions` —— 让 `-p` 在无人值守下不弹 tool-approval
+- `--tools ""` —— 禁用所有 built-in 工具（Read/Bash/Edit 等）。agent 的外部数据从 prompt 吃
+- `--json-schema '<inline json>'` —— 直接接 JSON 字符串，不要求文件路径
 
 ### LangGraph node 调用模板 (`tradingagents/agents/_runner.py`)
 
