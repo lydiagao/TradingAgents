@@ -10,10 +10,10 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 25（P1-T1→T11 + P2-T1→T14）|
-| **完成率 (active)** | 43.9 % (25/57) |
-| **当前 Session** | S02 — MoomooClient + §4.8 guardrail（KEYSTONE · 进行中） |
-| **当前 Phase** | Phase 2a |
+| **已完成** | 29（P1 全部 + P2 全部）|
+| **完成率 (active)** | 50.9 % (29/57) |
+| **当前 Session** | S06 → Phase 2 complete ✅, 下一步 Phase 3 |
+| **当前 Phase** | Phase 2 complete → Phase 3 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
 | **最近更新** | 2026-04-16 UTC |
 | **最近 commit** | `53ee3bb` (merge planning history into fork) |
@@ -112,14 +112,15 @@
 
 ---
 
-## Session 06 — Memory layer（待开始）
+## Session 06 — Memory layer ✅
 
-**Phase**: 2d · **SPEC**: §8.2, §8.3, §8.4 · **Risk**: MEDIUM（sim_date filter 必须正确）
+**Phase**: 2d · **SPEC**: §8.2, §8.3, §8.4
 
-- [ ] **P2-T15** `memory/vector_store.py`（ChromaDB + all-MiniLM-L6-v2 + `sim_date` filter）
-- [ ] **P2-T16** `memory/knowledge_base.py` + 4 个 KB seed（qubit_modalities, vendor_roadmaps, darpa_programs, nist_pqc_timeline）
-- [ ] **P2-T17** `memory/decision_log.py`（decisions / execution_log / outcomes / cost_log，UTC ISO8601）
-- [ ] **P2-T18** Phase 2 Exit：14 个数据源全通；`pytest tests/unit/` 全绿；`git tag phase-2-complete`
+- [x] **P2-T15** `memory/vector_store.py` ✅ — ChromaDB + all-MiniLM-L6-v2 + `sim_date` filter via `published_epoch` (numeric); 6 tests green
+  > ChromaDB `$lte` 只支持数值，不支持字符串。解决：published_at 同时存为 ISO8601 字符串 + epoch float (`published_epoch`)；`retrieve(sim_date=...)` 用 epoch 比较。
+- [x] **P2-T16** `memory/knowledge_base.py` + 4 KB seed ✅ (qubit_modalities / vendor_roadmaps / darpa_programs / nist_pqc_timeline)
+- [x] **P2-T17** `memory/decision_log.py` ✅ — 4 tables (decisions / execution_log / outcomes / cost_log); 4 tests green
+- [x] **P2-T18** Phase 2 Exit ✅ — 136 tests all green; `git tag phase-2-complete`
 
 ---
 
