@@ -10,10 +10,10 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 11（P1-T1 → P1-T11 全部完成 ✅）|
-| **完成率 (active)** | 19.3 % (11/57) |
-| **当前 Session** | S01 — Scaffold & model config（进行中） |
-| **当前 Phase** | Phase 1 |
+| **已完成** | 16（P1-T1→T11 + P2-T1→T5 全部完成 ✅）|
+| **完成率 (active)** | 28.1 % (16/57) |
+| **当前 Session** | S02 — MoomooClient + §4.8 guardrail（KEYSTONE · 进行中） |
+| **当前 Phase** | Phase 2a |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
 | **最近更新** | 2026-04-16 UTC |
 | **最近 commit** | `53ee3bb` (merge planning history into fork) |
@@ -69,15 +69,16 @@
 
 ---
 
-## Session 02 — MoomooClient + §4.8 guardrail（KEYSTONE · 待开始）
+## Session 02 — MoomooClient + §4.8 guardrail（KEYSTONE · 进行中）
 
-**Phase**: 2a · **Model**: Sonnet 4.6 high (8000) · **SPEC**: §4.8.1-4.8.3, §10A.2, §14 · **Risk**: HIGH
+**Phase**: 2a · **SPEC**: §4.8.1-4.8.3, §10A.2, §14 · **Risk**: HIGH
+**前置验证**：✅ moomoo-api 10.3.6308 已装入 venv · ✅ OpenD 运行中 localhost:11111 · ✅ NVDA 快照正常 · ✅ L2 订阅确认
 
-- [ ] **P2-T1** 实现 `tradingagents/dataflows/moomoo_client.py`（§4.8.3 全接口 + T0/T1 打标）
-- [ ] **P2-T2** 实现 `tradingagents/dataflows/__init__.py`（lazy `get_client()`）
-- [ ] **P2-T3** 实现 `tradingagents/dataflows/historical.py`（唯一 yfinance 入口）
-- [ ] **P2-T4** 实现 `tests/unit/test_moomoo_source_tag.py`（每个方法返回字典必带 `_source == "moomoo"`）
-- [ ] **P2-T5** 实现 `tests/unit/test_no_yfinance_on_hot_path.py`（守卫测试，从此每次 commit 必须通过）
+- [x] **P2-T1** `tradingagents/dataflows/moomoo_client.py` ✅ — 7 methods, all return `_source:"moomoo"` + T0/T1
+- [x] **P2-T2** `tradingagents/dataflows/__init__.py` ✅ — lazy `get_client()`; import 不开连接
+- [x] **P2-T3** `tradingagents/dataflows/historical.py` ✅ — 唯一 yfinance 入口
+- [x] **P2-T4** `tests/unit/test_moomoo_source_tag.py` ✅ — 4 tests all green (live OpenD)
+- [x] **P2-T5** `tests/unit/test_no_yfinance_on_hot_path.py` ✅ — guardrail green, 从此每次 commit 必须通过
 
 ---
 
