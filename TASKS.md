@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 2（P1-T1 fork ✅ / P1-T2 clone+merge ✅）|
-| **完成率 (active)** | 3.5 % (2/57) |
+| **已完成** | 3（P1-T1 / P1-T2 / P1-T3）|
+| **完成率 (active)** | 5.3 % (3/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -35,8 +35,8 @@
 
 - [x] **P1-T1** Fork `TauricResearch/TradingAgents` → https://github.com/lydiagao/TradingAgents ✅
 - [x] **P1-T2** Clone fork locally, create `quantum-fork` branch，merge 进原 planning 历史 ✅ (commit `53ee3bb`)
-- [~] **P1-T3** `uv venv --python 3.13 .venv`（ADR-2026-04-16：uv 代替 conda）
-- [ ] **P1-T4** `pip install -r requirements.txt`（18 deps，ADR 后不含 anthropic/langchain-anthropic/vectorbt）
+- [x] **P1-T3** `uv venv --python 3.13 .venv` ✅ (Python 3.13.12 installed in .venv; .gitignore 已含 `.venv`)
+- [~] **P1-T4** `pip install -r requirements.txt`（18 deps，ADR 后不含 anthropic/langchain-anthropic/vectorbt）
 - [ ] **P1-T5** 验证 `claude` CLI 可用 + CC 订阅已登录（ADR-2026-04-16：不需要 `ANTHROPIC_API_KEY`）
 - [ ] **P1-T6** `tradingagents/config/model_config.py`（AGENT_MODEL_MAP + get_model_config + `build_cli_args`）
 - [ ] **P1-T7** `tradingagents/config/universe.py`（QUANTUM_PURE_PLAYS + QUANTUM_EXPOSURE + UNIVERSE）
