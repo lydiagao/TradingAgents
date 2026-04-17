@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 18（P1-T1→T11 + P2-T1→T7 全部完成 ✅）|
-| **完成率 (active)** | 31.6 % (18/57) |
+| **已完成** | 25（P1-T1→T11 + P2-T1→T14）|
+| **完成率 (active)** | 43.9 % (25/57) |
 | **当前 Session** | S02 — MoomooClient + §4.8 guardrail（KEYSTONE · 进行中） |
 | **当前 Phase** | Phase 2a |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -91,24 +91,24 @@
 
 ---
 
-## Session 04 — Chatter 数据源（待开始 · 可与 S05 并行）
+## Session 04 — Chatter 数据源 ✅
 
 **Phase**: 2c · **SPEC**: §4.1, §4.2, §4.4, §4.5, §4.10, §8.1
 
-- [ ] **P2-T8** `dataflows/rss_quantum.py`（4 个量子 RSS feed）
-- [ ] **P2-T9** `dataflows/arxiv_client.py`
-- [ ] **P2-T10** `dataflows/newsapi_client.py`（100 req/day 预算 + cache）
-- [ ] **P2-T11** `dataflows/reddit_client.py`（PRAW OAuth，无匿名回退）
+- [x] **P2-T8** `dataflows/rss_quantum.py` ✅ — 4 feeds, dedup by URL hash, tier=important
+- [x] **P2-T9** `dataflows/arxiv_client.py` ✅ — quant-ph latest 30, keyword filter, tier=optional
+- [x] **P2-T10** `dataflows/newsapi_client.py` ✅ — 100/day budget counter, tier=important
+- [x] **P2-T11** `dataflows/reddit_client.py` ✅ — PRAW OAuth, no fallback, tier=important
 
 ---
 
-## Session 05 — Regulatory 数据源（待开始 · 可与 S04 并行）
+## Session 05 — Regulatory 数据源 ✅
 
 **Phase**: 2c · **SPEC**: §4.3, §4.6, §4.7, §4.9, §4.10
 
-- [ ] **P2-T12** `dataflows/sec_edgar.py`（10-Q / 10-K / 13F + CIK lookup + User-Agent）
-- [ ] **P2-T13** `dataflows/sam_gov.py`（DARPA/DOE/NSF/DOD/NIST filter）
-- [ ] **P2-T14** `dataflows/uspto_client.py`（weekly poll）
+- [x] **P2-T12** `dataflows/sec_edgar.py` ✅ — XBRL company facts + submissions + 13F; IONQ live test OK (cash=$1.03B)
+- [x] **P2-T13** `dataflows/sam_gov.py` ✅ — DARPA/DOE/NSF/DOD/NIST keyword filter, tier=important
+- [x] **P2-T14** `dataflows/uspto_client.py` ✅ — PatentsView API, tier=optional
 
 ---
 
