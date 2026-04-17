@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 16（P1-T1→T11 + P2-T1→T5 全部完成 ✅）|
-| **完成率 (active)** | 28.1 % (16/57) |
+| **已完成** | 18（P1-T1→T11 + P2-T1→T7 全部完成 ✅）|
+| **完成率 (active)** | 31.6 % (18/57) |
 | **当前 Session** | S02 — MoomooClient + §4.8 guardrail（KEYSTONE · 进行中） |
 | **当前 Phase** | Phase 2a |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -82,12 +82,12 @@
 
 ---
 
-## Session 03 — Retry helper + Pydantic schemas（待开始）
+## Session 03 — Retry helper + Pydantic schemas（进行中）
 
 **Phase**: 2b · **SPEC**: §4.10, §8.5
 
-- [ ] **P2-T6** `dataflows/retry.py` 的 `FetchResult` + `fetch_with_policy(source, fetcher, tier)`
-- [ ] **P2-T7** `memory/schemas.py`（9 个 agent 的 Pydantic 模型，含 News `strategic_score` + Sentiment `macro_score`）
+- [x] **P2-T6** `dataflows/retry.py` ✅ — FetchResult + fetch_with_policy + 3-tier degradation; 9 tests green
+- [x] **P2-T7** `memory/schemas.py` ✅ — 9 Pydantic models + ALL_SCHEMAS dict; 37 tests green (golden + missing key + out-of-range + wrong enum)
 
 ---
 
