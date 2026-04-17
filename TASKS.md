@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 8（P1-T1 → P1-T8）|
-| **完成率 (active)** | 14.0 % (8/57) |
+| **已完成** | 9（P1-T1 → P1-T9）|
+| **完成率 (active)** | 15.8 % (9/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -51,9 +51,11 @@
   > CLI 真实 flag 已 pin（见 SPEC §6 末尾）：`--effort` 替 `--thinking-budget`；`--permission-mode bypassPermissions`；`--tools ""` 禁 built-in；`--json-schema` 吃 inline JSON。smoke test 通过 16 个 agent key。
 - [x] **P1-T7** `tradingagents/config/universe.py` ✅（9 ticker）
 - [x] **P1-T8** `tradingagents/config/ciks.json` ✅（9 CIK，全部 SEC EDGAR 返回 HTTP 200）
-- [~] **P1-T9** 修改 `tradingagents/graph/setup.py`，用 `run_claude(agent_name, prompt, schema)` CLI wrapper
-- [ ] **P1-T10** `tests/unit/test_model_config.py`（覆盖 16 个 agent key + `build_cli_args` 输出）
-- [ ] **P1-T11** Baseline `python main.py NVDA 2026-04-15` → decision JSON（CLI 走订阅，零 API 费）；同时 pin 真实 CLI flag 名
+- [x] **P1-T9** 创建 `tradingagents/agents/_runner.py`（`run_claude(agent_name, prompt, schema)` CLI wrapper）✅
+  > **范围收窄说明**：upstream agents 用 `llm.bind_tools(...)` 做 market data 工具调用。我们的 CLI 路径用 `--tools ""` 禁所有工具，设计是"Python 侧拉数据 → 塞 prompt → CLI 只推理"。深度改写 `graph/setup.py` 替换所有 upstream agent 需要 emulate bind_tools，超出 Phase 1 范围；这项工作挪到 **Phase 3**（§7.6/§7.7 本来就要重写所有 agent）。
+  > Phase 1 P1-T9 的验收：`run_claude` 端到端可用。已验证：✅ plain text 调用、✅ schema 模式（发现 CLI 用 `structured_output` 字段而非 `result`，已 pin）、✅ raw wrapper 返回、✅ UnknownAgentError 路径。
+- [~] **P1-T10** `tests/unit/test_model_config.py`（覆盖 16 个 agent key + `build_cli_args` 输出 + `run_claude` mock）
+- [ ] **P1-T11** Baseline 跑 → decision JSON。**原计划受 P1-T9 收窄影响**：`python main.py` 走 upstream pipeline 仍需 `ANTHROPIC_API_KEY`（因为 upstream agents 离不开 bind_tools）。A-Strict 下的 P1-T11 改为"mini baseline"：用 `run_claude("portfolio_manager", <NVDA 数据 prompt>, schema=decision_schema)` 走一遍 CLI 链路，产出 decision JSON；完整 upstream pipeline 的替换 Phase 3 完成。
 
 **Session 01 Exit**: P1-T11 绿灯 → `feat(P1): scaffold + per-agent model config` → 切换到 Session 02
 
@@ -271,6 +273,8 @@
 | 2026-04-16 | 创建 `TASKS.md` + `CLAUDE.md`（Session 01 启动） | 启动任务追踪 |
 | 2026-04-16 | **方向修正**：初版 "方案 A = Claude Agent SDK + CC 订阅" 被官方文档否决。SDK 强制要求 `ANTHROPIC_API_KEY`，**不走**订阅。真正走订阅的路径只有 `claude -p` CLI 子进程。 | SPEC §2 / §6 / §11.3 / §12 的 LLM 调用方式待重定（等用户 A-Strict / A-Gray / E 再选一次） |
 | 2026-04-16 | **ADR-2026-04-16 落地**：用户选 A-Strict（`claude` CLI）+ 暂缓 Phase 7-9 回测 / paper 验证 / live。fork 确认为 lydiagao/TradingAgents；uv 替 conda；merge 布局保留历史。 | SPEC §2 / §6 / §11.3 / §12 / §13 Phase 1/7/8/9 修订；PROGRESS P1-T3/T4/T5/T9/T11 改写；Session 17-20 标 DEFERRED；active task 74→57；P1-T1 ✅ |
+| 2026-04-16 | **P1-T9 范围收窄**：upstream agents 用 `llm.bind_tools(...)`，我们的 CLI 路径无法 emulate。决定 Phase 1 只做 `_runner.py`，深度改写 upstream agent 挪到 Phase 3（§7.6/§7.7 本就要全部重写）。P1-T11 相应从"跑 upstream main.py"改为"mini baseline 走 `run_claude` 产出 decision JSON"。 | Phase 1 scope 减；Phase 3 增回；P1-T11 判据改；SPEC 不动（Phase 3 本来就规划了全部 agent 重写） |
+| 2026-04-16 | **CLI schema 字段 pin**：`--json-schema` 模式下 CLI 返回结构为 `wrapper["structured_output"]`，`wrapper["result"]` 为空字符串。`_runner.py:run_claude` 已适配。 | SPEC §6 build_cli_args 与实际一致；run_claude schema 分支路径已验证 |
 
 ---
 
