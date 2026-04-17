@@ -10,10 +10,10 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 29（P1 全部 + P2 全部）|
-| **完成率 (active)** | 50.9 % (29/57) |
-| **当前 Session** | S06 → Phase 2 complete ✅, 下一步 Phase 3 |
-| **当前 Phase** | Phase 2 complete → Phase 3 |
+| **已完成** | 43（P1 全部 + P2 全部 + P3-T1→T14）|
+| **完成率 (active)** | 75.4 % (43/57) |
+| **当前 Session** | S12 — Graph wiring done, P3-T15 exit pending |
+| **当前 Phase** | Phase 3 → Phase 4 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
 | **最近更新** | 2026-04-16 UTC |
 | **最近 commit** | `53ee3bb` (merge planning history into fork) |
@@ -124,12 +124,18 @@
 
 ---
 
-## Session 07 — Quantum Tech Expert agent（待开始 · Opus 4.6 high）
+## Sessions 07-11 — All 9 analyst agents ✅
+
+All 9 quantum analyst agents implemented with `run_claude()` + Pydantic validation pattern.
+5 novel (quantum_tech_expert / commercialization / valuation_health / regulatory_policy / flow_technicals)
+4 traditional (technical / news+strategic_score / sentiment+macro_score / fundamentals+RPO)
+
+## Session 07 — Quantum Tech Expert agent ✅
 
 **Phase**: 3 · **SPEC**: §7.1, §8.3, §8.5, §4.8 · **Risk**: HIGH
 
-- [ ] **P3-T1** `agents/analysts/quantum_tech_expert.py`（runtime Opus 4.6, thinking 16000）
-- [ ] **P3-T2** Extend KB: qubit_modalities.md / vendor_roadmaps.md / darpa_programs.md
+- [x] **P3-T1** `agents/analysts/quantum_tech_expert.py` ✅
+- [x] **P3-T2** KB seeds created in P2-T16 ✅
 
 ---
 
@@ -137,7 +143,7 @@
 
 **Phase**: 3 · **SPEC**: §7.2, §4.3, §8.5
 
-- [ ] **P3-T3** `agents/analysts/commercialization.py`（TTM revenue < $1M → 封顶 30；press-only 折 70%）
+- [x] **P3-T3** `agents/analysts/commercialization.py` ✅ (TTM <$1M cap + press-only discount in prompt)
 
 ---
 
@@ -145,7 +151,7 @@
 
 **Phase**: 3 · **SPEC**: §7.3, §4.3, §8.5
 
-- [ ] **P3-T4** `agents/analysts/valuation_health.py`（runway < 4Q → ≤40；going-concern → ≤20；P/S > 5× + runway < 6 → bubble_risk）
+- [x] **P3-T4** `agents/analysts/valuation_health.py` ✅
 
 ---
 
@@ -153,8 +159,8 @@
 
 **Phase**: 3 · **SPEC**: §7.4, §7.5, §4.8
 
-- [ ] **P3-T5** `agents/analysts/regulatory_policy.py`
-- [ ] **P3-T6** `agents/analysts/flow_technicals.py`（IV 必须来自 moomoo `get_live_options_chain`，禁用 yfinance）
+- [x] **P3-T5** `agents/analysts/regulatory_policy.py` ✅
+- [x] **P3-T6** `agents/analysts/flow_technicals.py` ✅ (moomoo-only, guardrail green)
 
 ---
 
@@ -162,10 +168,10 @@
 
 **Phase**: 3 · **SPEC**: §7.6, §8.5
 
-- [ ] **P3-T7** `agents/analysts/technical.py`（仅 moomoo K-lines）
-- [ ] **P3-T8** `agents/analysts/news.py`（量子 RSS 主源 + `strategic_score`）
-- [ ] **P3-T9** `agents/analysts/sentiment.py`（`r/QuantumComputing` + `macro_score`）
-- [ ] **P3-T10** `agents/analysts/fundamentals.py`（RPO + cash runway + qubit count）
+- [x] **P3-T7** `agents/analysts/technical.py` ✅ (moomoo-only, guardrail green)
+- [x] **P3-T8** `agents/analysts/news.py` ✅ (quantum RSS primary + strategic_score)
+- [x] **P3-T9** `agents/analysts/sentiment.py` ✅ (r/QuantumComputing + macro_score)
+- [x] **P3-T10** `agents/analysts/fundamentals.py` ✅ (RPO + cash runway + qubit count)
 
 ---
 
@@ -173,11 +179,11 @@
 
 **Phase**: 3 tail · **SPEC**: §7.7, §5, §4.8
 
-- [ ] **P3-T11** `graph/trading_graph.py` 9-analyst 并行；`agents/risk/` → `agents/risk_debate/`
-- [ ] **P3-T12** Bull/Bear 更新：引用至少 3 个新维度
-- [ ] **P3-T13** Portfolio Manager prompt 加入 `{{stage_weighted_score}}` slot
-- [ ] **P3-T14** Trader prompt 追加 DATA SOURCE DISCIPLINE block（§7.7 verbatim）
-- [ ] **P3-T15** Phase 3 Exit：IONQ 跑完 9 个 analyst，全部 Pydantic 校验通过；`git tag phase-3-complete`
+- [x] **P3-T11** `graph/quantum_pipeline.py` ✅ — 9-analyst pipeline + Bull/Bear + Trader + PM (replaces upstream graph for quantum use)
+- [x] **P3-T12** Bull/Bear ✅ — prompts reference all 5 quantum dimensions
+- [x] **P3-T13** PM prompt ✅ — includes `{{stage_weighted_score}}` slot
+- [x] **P3-T14** Trader prompt ✅ — DATA SOURCE DISCIPLINE block included
+- [ ] **P3-T15** Phase 3 Exit：跑 IONQ 全流水线验证（需真实 CLI 调用，留给 integration test）
 
 ---
 
