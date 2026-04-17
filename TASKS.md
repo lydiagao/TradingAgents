@@ -9,14 +9,14 @@
 
 | 字段 | 值 |
 |---|---|
-| **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 57（P1-P6 全部完成 🎉）|
-| **完成率 (active)** | 100 % (57/57) |
-| **当前 Session** | 全部 active scope 完成 |
-| **当前 Phase** | Phase 6 complete (Phase 7-9 deferred) |
-| **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
-| **最近更新** | 2026-04-16 UTC |
-| **最近 commit** | `53ee3bb` (merge planning history into fork) |
+| **总任务数** | 57 active + 3 ops + 17 deferred = 77 |
+| **已完成** | 60（57 active + 3 ops）|
+| **完成率** | 100% active + 100% ops（deferred 17 待定）|
+| **当前状态** | **运营中** — launchd 每日 08:00 ET 自动运行 |
+| **当前 Phase** | Phase 6 complete + Ops ready（Phase 7-9 deferred）|
+| **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`|
+| **最近更新** | 2026-04-17 UTC |
+| **最近 commit** | `c1d8552` (feat(ops): daily_cycle + Gmail + launchd) |
 
 ### 状态图例
 
@@ -229,6 +229,30 @@ All 9 quantum analyst agents implemented with `run_claude()` + Pydantic validati
 
 ---
 
+## Ops — 运营就绪化 ✅
+
+**完成于**: 2026-04-16 · **Commit**: `c1d8552` · **已 push 到 GitHub**
+
+- [x] **Ops-1** `tradingagents/daily_cycle.py` ✅ — launchd 入口，支持 `--dry-run` / `--tickers`；加载 `.env`；按 ticker 跑 pipeline → 记录 decision_log → 发 Gmail 报告
+- [x] **Ops-2** `tradingagents/orchestration/alerts.py` ✅ — Gmail smtplib + App Password（替代 MCP，MCP create_draft 调用失败）；测试邮件已收到
+- [x] **Ops-3** `tradingagents/orchestration/scheduler.py` ✅ — launchd plist 生成 + install/uninstall/status 子命令；已 load：`com.quantum-agent.daily-cycle`
+
+**运行时配置**:
+- Schedule: 周一至周五 07:00 CT = **08:00 ET**
+- Tickers: IONQ, RGTI, QBTS, QUBT
+- Gmail: hui.gao2000@gmail.com（App Password 在 `.env`，已 gitignored）
+- Logs: `~/.tradingagents/daily_cycle_*.log`
+- Kill switch: `touch /tmp/quantum_agent_kill` 停止 · `rm` 恢复
+
+**管理命令**:
+```
+python -m tradingagents.daily_cycle --tickers IONQ --dry-run   # 干跑测试
+python -m tradingagents.orchestration.scheduler status          # 查看 launchd
+python -m tradingagents.orchestration.scheduler uninstall       # 卸载
+```
+
+---
+
 ## Session 17 — Backtest 框架 + sim_date 强制 — **[DEFERRED 2026-04-16]**
 
 **Phase**: 7 · **SPEC**: §13 Phase 7, §8.2, §14
@@ -284,6 +308,8 @@ All 9 quantum analyst agents implemented with `run_claude()` + Pydantic validati
 | 2026-04-16 | **ADR-2026-04-16 落地**：用户选 A-Strict（`claude` CLI）+ 暂缓 Phase 7-9 回测 / paper 验证 / live。fork 确认为 lydiagao/TradingAgents；uv 替 conda；merge 布局保留历史。 | SPEC §2 / §6 / §11.3 / §12 / §13 Phase 1/7/8/9 修订；PROGRESS P1-T3/T4/T5/T9/T11 改写；Session 17-20 标 DEFERRED；active task 74→57；P1-T1 ✅ |
 | 2026-04-16 | **P1-T9 范围收窄**：upstream agents 用 `llm.bind_tools(...)`，我们的 CLI 路径无法 emulate。决定 Phase 1 只做 `_runner.py`，深度改写 upstream agent 挪到 Phase 3（§7.6/§7.7 本就要全部重写）。P1-T11 相应从"跑 upstream main.py"改为"mini baseline 走 `run_claude` 产出 decision JSON"。 | Phase 1 scope 减；Phase 3 增回；P1-T11 判据改；SPEC 不动（Phase 3 本来就规划了全部 agent 重写） |
 | 2026-04-16 | **CLI schema 字段 pin**：`--json-schema` 模式下 CLI 返回结构为 `wrapper["structured_output"]`，`wrapper["result"]` 为空字符串。`_runner.py:run_claude` 已适配。 | SPEC §6 build_cli_args 与实际一致；run_claude schema 分支路径已验证 |
+| 2026-04-16 | **IONQ 全流水线 integration test 通过**：13 CLI 调用（9 analyst + bull/bear + trader + PM），544.9s，输出 `hold` confidence 0.42。`data_incomplete_agents: []`（全部 agent 成功）。 | 验证端到端 pipeline 可用；PM 推理质量合格 |
+| 2026-04-16 | **运营就绪化完成**：daily_cycle.py + Gmail smtplib alerts + launchd scheduler。Gmail MCP create_draft 失败 → 改用 App Password + smtplib。测试邮件已收到。launchd 已 load，周一至周五 08:00 ET 自动触发。 | 系统进入自动运营状态；Phase 7-9 deferred 期间每天自动产出分析报告 |
 
 ---
 
@@ -301,6 +327,24 @@ All 9 quantum analyst agents implemented with `run_claude()` + Pydantic validati
 - SPEC / PROGRESS / TASKS 同步修订
 - P1-T1 ✅（fork = lydiagao/TradingAgents）
 - P1-T2 进行中：即将 clone fork 并 merge planning 历史
+
+### Session 01 结束（2026-04-17）
+
+**本 session 完成**：
+- Phase 1-6 全部 57 个 active task 完成 ✅
+- Ops 3 个任务完成（daily_cycle + Gmail + launchd）✅
+- IONQ 全流水线 integration test 通过（13 calls, 544.9s, hold/0.42）
+- 测试邮件已收到
+- 代码 push 到 GitHub quantum-fork 分支
+- 164 unit tests all green
+- launchd loaded，明天 08:00 ET 自动首次运行
+
+**系统状态**: 运营中
+**下一步选项**:
+- 等明天 08:00 ET 第一次自动运行，检查 Gmail 报告
+- 解除 Phase 7 (backtest) deferred → 渐进路线（1 ticker × 1 month 试水）
+- 解除 Phase 8 (30-day paper) deferred → 直接开始（Phase 7 可选跳过）
+- 代码质量加固：给 agents / pipeline / executor 补 mock unit tests
 
 **第一个动作**：等待用户回复关于 5 个 blocker 的决策：
 1. GitHub fork 方式（浏览器 / 安装 gh / 先跳过）
