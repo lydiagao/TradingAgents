@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 6（P1-T1 → P1-T6）|
-| **完成率 (active)** | 10.5 % (6/57) |
+| **已完成** | 8（P1-T1 → P1-T8）|
+| **完成率 (active)** | 14.0 % (8/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -49,9 +49,9 @@
   > - **待 P1-T11 验证的 flag**：thinking budget 传法、`--permission-mode`、`--json-schema` 实际行为
 - [x] **P1-T6** `tradingagents/config/model_config.py`（AGENT_MODEL_MAP + get_model_config + `build_cli_args`）✅
   > CLI 真实 flag 已 pin（见 SPEC §6 末尾）：`--effort` 替 `--thinking-budget`；`--permission-mode bypassPermissions`；`--tools ""` 禁 built-in；`--json-schema` 吃 inline JSON。smoke test 通过 16 个 agent key。
-- [~] **P1-T7** `tradingagents/config/universe.py`（QUANTUM_PURE_PLAYS + QUANTUM_EXPOSURE + UNIVERSE）
-- [ ] **P1-T8** `tradingagents/config/ciks.json`（9 个 ticker 的 CIK 映射）
-- [ ] **P1-T9** 修改 `tradingagents/graph/setup.py`，用 `run_claude(agent_name, prompt, schema)` CLI wrapper
+- [x] **P1-T7** `tradingagents/config/universe.py` ✅（9 ticker）
+- [x] **P1-T8** `tradingagents/config/ciks.json` ✅（9 CIK，全部 SEC EDGAR 返回 HTTP 200）
+- [~] **P1-T9** 修改 `tradingagents/graph/setup.py`，用 `run_claude(agent_name, prompt, schema)` CLI wrapper
 - [ ] **P1-T10** `tests/unit/test_model_config.py`（覆盖 16 个 agent key + `build_cli_args` 输出）
 - [ ] **P1-T11** Baseline `python main.py NVDA 2026-04-15` → decision JSON（CLI 走订阅，零 API 费）；同时 pin 真实 CLI flag 名
 
