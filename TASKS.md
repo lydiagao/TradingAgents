@@ -36,7 +36,7 @@
 - [!] **P1-T2** Clone fork locally, create `quantum-fork` branch — *阻塞：依赖 P1-T1 + 目录布局决策*
 - [!] **P1-T3** 创建 Python 3.13 环境 — *用 `uv venv --python 3.13 .venv` 替代 conda（SPEC §2 允许 conda 或 uv），等用户确认替代方案*
 - [ ] **P1-T4** `pip install -r requirements.txt` + SPEC §2 的 19 个依赖
-- [!] **P1-T5** Copy `.env.example` → `.env`，填入 `ANTHROPIC_API_KEY` — *阻塞：等用户提供 key 或确认 key 所在位置*
+- [!] **P1-T5** Copy `.env.example` → `.env`，填入 `ANTHROPIC_API_KEY` — *阻塞：等用户决定 LLM 后端（A-Strict 用 CLI 不需要 key；A-Gray 用 `CLAUDE_CODE_OAUTH_TOKEN`；E 仍需 `ANTHROPIC_API_KEY`）*
 - [ ] **P1-T6** 创建 `tradingagents/config/model_config.py`（AGENT_MODEL_MAP + get_model_config() + build_thinking_param()）
 - [ ] **P1-T7** 创建 `tradingagents/config/universe.py`（QUANTUM_PURE_PLAYS + QUANTUM_EXPOSURE + UNIVERSE）
 - [ ] **P1-T8** 创建 `tradingagents/config/ciks.json`（9 个 ticker 的 CIK 映射）
@@ -258,6 +258,7 @@
 | 日期 | 事件 | 影响 |
 |---|---|---|
 | 2026-04-16 | 创建 `TASKS.md` + `CLAUDE.md`（Session 01 启动） | 启动任务追踪 |
+| 2026-04-16 | **方向修正**：初版 "方案 A = Claude Agent SDK + CC 订阅" 被官方文档否决。SDK 强制要求 `ANTHROPIC_API_KEY`，**不走**订阅。真正走订阅的路径只有 `claude -p` CLI 子进程。 | SPEC §2 / §6 / §11.3 / §12 的 LLM 调用方式待重定（等用户 A-Strict / A-Gray / E 再选一次） |
 
 ---
 
@@ -270,12 +271,19 @@
 - `TradingAgents` 尚未 fork / clone
 - 本机无 `gh` / `conda`，仅有 `uv 0.11.2` + Python 3.14.2
 
-**第一个动作**：等待用户回复关于 4 个 blocker 的决策：
+**第一个动作**：等待用户回复关于 5 个 blocker 的决策：
 1. GitHub fork 方式（浏览器 / 安装 gh / 先跳过）
 2. conda → uv 替代是否 OK
 3. TradingAgents 仓库布局（sibling / subdir / merge）
-4. `ANTHROPIC_API_KEY` 的位置 / 提供方式
+4. `ANTHROPIC_API_KEY` 的位置 / 提供方式 — **依赖 #5 的结果**
+5. **LLM 后端路线**（方向修正后重选）：
+   - **A-Strict**：`claude -p` CLI 子进程，走 CC 订阅，$0 API 开销；SPEC §6 要改（~50 行）
+   - **A-Gray**：`claude_agent_sdk` + `CLAUDE_CODE_OAUTH_TOKEN`，ToS 灰色
+   - **E**：回退原方案 + 调低 thinking / Haiku 倾斜，$30-60/月
+   - **混合**：关键 agent 走 E，其他走 A-Strict
 
-**拿到回复后的下一步**：执行 P1-T1（fork）→ P1-T2（clone + 建 `quantum-fork` 分支）。
+**拿到回复后的下一步**：
+- 修订 `SPEC.md` §2 / §6 / §11.3 / §12（LLM 后端相关）
+- 执行 P1-T1（fork）→ P1-T2（clone + 建 `quantum-fork` 分支）→ 按顺序推进
 
 ---
