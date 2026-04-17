@@ -15,15 +15,15 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 - [ ] **P1-T1** Fork `TauricResearch/TradingAgents` on GitHub. *Done*: fork URL accessible under user's account. *SPEC*: §13 Phase 1
 - [ ] **P1-T2** Clone fork locally, create `quantum-fork` branch. *Done*: `git branch --show-current` returns `quantum-fork`. *SPEC*: §13 Phase 1
-- [ ] **P1-T3** Create conda env `quantum-agent` with Python 3.13. *Done*: `conda activate quantum-agent && python --version` shows 3.13+. *SPEC*: §2, §13 Phase 1
-- [ ] **P1-T4** Install dependencies: `pip install -r requirements.txt` plus added deps per SPEC §2. *Done*: `pip list` shows all 19 deps; `pytest --co` runs. *SPEC*: §2
-- [ ] **P1-T5** Copy `.env.example` → `.env`, populate `ANTHROPIC_API_KEY`. *Done*: `python -c "from anthropic import Anthropic; Anthropic()"` succeeds. *SPEC*: §12
+- [ ] **P1-T3** Create Python 3.13 env via `uv venv --python 3.13 .venv`（ADR-2026-04-16：uv 代替 conda）. *Done*: `source .venv/bin/activate && python --version` shows 3.13+. *SPEC*: §2, §13 Phase 1
+- [ ] **P1-T4** Install dependencies: `pip install -r requirements.txt` plus added deps per SPEC §2（ADR-2026-04-16 后 18 个 deps，不含 anthropic/langchain-anthropic/vectorbt）. *Done*: `pip list` shows all deps; `pytest --co` runs. *SPEC*: §2
+- [ ] **P1-T5** 验证 `claude` CLI 可用 + CC 订阅已登录（ADR-2026-04-16：**不再**用 `ANTHROPIC_API_KEY`）. *Done*: `claude -p "reply with {\"ok\":true}" --output-format json` 返回合法 JSON. *SPEC*: §6 ADR, §12
 - [ ] **P1-T6** Create `tradingagents/config/model_config.py` with `AGENT_MODEL_MAP` + `get_model_config()` + `build_thinking_param()`. *Done*: unit test asserts every agent key returns a valid model ID + thinking_budget. *SPEC*: §6
 - [ ] **P1-T7** Create `tradingagents/config/universe.py` with `QUANTUM_PURE_PLAYS`, `QUANTUM_EXPOSURE`, `UNIVERSE`. *Done*: `from tradingagents.config.universe import UNIVERSE` returns 9 tickers. *SPEC*: §3
 - [ ] **P1-T8** Create `tradingagents/config/ciks.json` with 9-ticker CIK map. *Done*: JSON parses; SEC EDGAR `https://data.sec.gov/submissions/CIK{cik}.json` returns 200 for each. *SPEC*: §4.3
-- [ ] **P1-T9** Modify `tradingagents/graph/setup.py` (or equivalent) to pass per-agent model + thinking_budget to `ChatAnthropic` / native Anthropic SDK. *Done*: running a single agent instantiation uses the model from `AGENT_MODEL_MAP`, not a hardcoded default. *SPEC*: §6
+- [ ] **P1-T9** Modify `tradingagents/graph/setup.py` (or equivalent) to replace `ChatAnthropic` / native Anthropic SDK calls with `run_claude(agent_name, prompt, schema)` CLI wrapper (ADR-2026-04-16). *Done*: running a single agent uses the model from `AGENT_MODEL_MAP` via `claude -p` subprocess, not a hardcoded default. *SPEC*: §6 ADR
 - [ ] **P1-T10** Create `tests/unit/test_model_config.py`. *Done*: pytest passes; covers all 16 agent keys. *SPEC*: §14
-- [ ] **P1-T11** Baseline pipeline run: `python main.py NVDA 2026-04-15` produces a decision JSON with cost ~$0.50. *Done*: `decisions` table has one row for NVDA; stdout shows decision JSON. *SPEC*: §13 Phase 1 exit
+- [ ] **P1-T11** Baseline pipeline run: `python main.py NVDA 2026-04-15` produces a decision JSON（ADR-2026-04-16 后走 `claude` CLI 订阅，无 API 费用）. *Done*: `decisions` table has one row for NVDA; stdout shows decision JSON. 同时 pin 下 CLI 的真实 flag 名（§6 ADR 验证项）. *SPEC*: §13 Phase 1 exit
 
 ---
 
@@ -120,9 +120,11 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ---
 
-## Phase 7 — Backtest (target: 2-4 weeks)
+## Phase 7 — Backtest (target: 2-4 weeks) — **[DEFERRED 2026-04-16]**
 
-- [ ] **P7-T1** Implement `backtest/runner.py` using `vectorbt` (ADR: vectorbt over backtrader). Threads `sim_date` through every RAG query + every agent call. *Done*: running on IONQ Jan 2024 → Apr 2025 completes; decisions written to a separate `backtest_decisions` table. *SPEC*: §13 Phase 7
+> 用户决定先不做回测。本阶段所有任务暂缓，保留作 future roadmap。启动前需重评估 CLI 订阅的回测吞吐 / 是否临时开 API 账单。
+
+- [ ] **P7-T1** [DEFERRED] Implement `backtest/runner.py` using `vectorbt` (ADR: vectorbt over backtrader). Threads `sim_date` through every RAG query + every agent call. *Done*: running on IONQ Jan 2024 → Apr 2025 completes; decisions written to a separate `backtest_decisions` table. *SPEC*: §13 Phase 7
 - [ ] **P7-T2** Acquire historical data: at least Jan 2024 → present via moomoo K-lines (preferred) or yfinance fallback. *Done*: OHLCV files cached under `data/historical/`. *SPEC*: §13 Phase 7
 - [ ] **P7-T3** Implement `tests/backtest/test_no_lookahead.py` — asserts vector store retrieval at `sim_date=2024-06-01` returns no docs with `published_at > 2024-06-01`. *Done*: passes. *SPEC*: §8.2, §14
 - [ ] **P7-T4** Implement `tests/backtest/test_reproducibility.py` — same inputs + `temperature=0` → same outputs. *Done*: two successive backtests on the same date produce identical decisions. *SPEC*: §14, §15
@@ -132,7 +134,10 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ---
 
-## Phase 8 — Live paper validation (target: 30 days)
+## Phase 8 — Live paper validation (target: 30 days) — **[DEFERRED 2026-04-16]**
+
+> 依赖 Phase 7 完成。保留为 future roadmap。
+
 
 - [ ] **P8-T1** Paper pipeline runs daily for 30 trading days without manual intervention. *Done*: 30 rows in `execution_log` with non-null T5 for non-hold decisions (excluding halt / kill-switch days). *SPEC*: §13 Phase 8
 - [ ] **P8-T2** Daily Gmail report with positions, P&L, agent rationale, latency stats. *Done*: 30 emails received. *SPEC*: §13 Phase 8, §11.4
@@ -144,7 +149,10 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ---
 
-## Phase 9 — Small live (target: ongoing)
+## Phase 9 — Small live (target: ongoing) — **[DEFERRED 2026-04-16]**
+
+> 真钱上线，依赖 Phase 7/8。保留为 future roadmap。
+
 
 - [ ] **P9-T1** Implement `execution/live_executor.py` (same interface as paper_executor, `trd_env="REAL"`). Guardrail: raises unless `ENVIRONMENT=live` AND user approval confirmed. *Done*: unit test with `ENVIRONMENT=paper` raises; with `live` executes. *SPEC*: §10A.5, §13 Phase 9
 - [ ] **P9-T2** Switch `.env` `ENVIRONMENT=live`. Cap total quantum exposure at 5% (override `MAX_QUANTUM_EXPOSURE = 0.05` via config). *Done*: `.env` updated; hard gate uses 5% cap. *SPEC*: §13 Phase 9
@@ -155,7 +163,7 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ## Meta
 
-- Total tasks: 74
+- Total tasks: 74（其中 Phase 7-9 共 17 task [DEFERRED 2026-04-16]；active = 57）
 - Guardrail test (`test_no_yfinance_on_hot_path.py`, P2-T5) must pass on every commit from Phase 2 onward.
 - Latency regression test (P5-T6 `test_latency_budget.py`) runs nightly only; marked `@pytest.mark.nightly`.
 - Every agent modification in Phase 3 must be accompanied by a schema fixture update in `tests/unit/test_schemas.py`.

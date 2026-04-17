@@ -9,9 +9,9 @@
 
 | 字段 | 值 |
 |---|---|
-| **总任务数** | 74 |
-| **已完成** | 0 |
-| **完成率** | 0.0 % |
+| **总任务数** | 57 active + 17 deferred = 74 |
+| **已完成** | 1（P1-T1 fork）|
+| **完成率 (active)** | 1.8 % (1/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **最近更新** | 2026-04-16 UTC |
@@ -32,17 +32,17 @@
 
 **Phase**: 1 · **Model**: Sonnet 4.6 medium thinking · **SPEC 参考**: §2, §3, §6, §12, §13 Phase 1
 
-- [!] **P1-T1** Fork `TauricResearch/TradingAgents` on GitHub — *阻塞：本机无 `gh` CLI，等用户选择（a）浏览器 fork / (b) 安装 gh / (c) 跳过先 clone upstream*
-- [!] **P1-T2** Clone fork locally, create `quantum-fork` branch — *阻塞：依赖 P1-T1 + 目录布局决策*
-- [!] **P1-T3** 创建 Python 3.13 环境 — *用 `uv venv --python 3.13 .venv` 替代 conda（SPEC §2 允许 conda 或 uv），等用户确认替代方案*
-- [ ] **P1-T4** `pip install -r requirements.txt` + SPEC §2 的 19 个依赖
-- [!] **P1-T5** Copy `.env.example` → `.env`，填入 `ANTHROPIC_API_KEY` — *阻塞：等用户决定 LLM 后端（A-Strict 用 CLI 不需要 key；A-Gray 用 `CLAUDE_CODE_OAUTH_TOKEN`；E 仍需 `ANTHROPIC_API_KEY`）*
-- [ ] **P1-T6** 创建 `tradingagents/config/model_config.py`（AGENT_MODEL_MAP + get_model_config() + build_thinking_param()）
-- [ ] **P1-T7** 创建 `tradingagents/config/universe.py`（QUANTUM_PURE_PLAYS + QUANTUM_EXPOSURE + UNIVERSE）
-- [ ] **P1-T8** 创建 `tradingagents/config/ciks.json`（9 个 ticker 的 CIK 映射）
-- [ ] **P1-T9** 修改 `tradingagents/graph/setup.py`，按 agent 名传入 model + thinking_budget
-- [ ] **P1-T10** 创建 `tests/unit/test_model_config.py`（覆盖 16 个 agent key）
-- [!] **P1-T11** Baseline 跑 `python main.py NVDA 2026-04-15`，cost ≈ $0.50 — *依赖 P1-T1 到 P1-T10 全部 green + 用户授权真实 API 消费*
+- [x] **P1-T1** Fork `TauricResearch/TradingAgents` → https://github.com/lydiagao/TradingAgents ✅
+- [~] **P1-T2** Clone fork locally, create `quantum-fork` branch，merge 进原 planning 历史
+- [ ] **P1-T3** `uv venv --python 3.13 .venv`（ADR-2026-04-16：uv 代替 conda）
+- [ ] **P1-T4** `pip install -r requirements.txt`（18 deps，ADR 后不含 anthropic/langchain-anthropic/vectorbt）
+- [ ] **P1-T5** 验证 `claude` CLI 可用 + CC 订阅已登录（ADR-2026-04-16：不需要 `ANTHROPIC_API_KEY`）
+- [ ] **P1-T6** `tradingagents/config/model_config.py`（AGENT_MODEL_MAP + get_model_config + `build_cli_args`）
+- [ ] **P1-T7** `tradingagents/config/universe.py`（QUANTUM_PURE_PLAYS + QUANTUM_EXPOSURE + UNIVERSE）
+- [ ] **P1-T8** `tradingagents/config/ciks.json`（9 个 ticker 的 CIK 映射）
+- [ ] **P1-T9** 修改 `tradingagents/graph/setup.py`，用 `run_claude(agent_name, prompt, schema)` CLI wrapper
+- [ ] **P1-T10** `tests/unit/test_model_config.py`（覆盖 16 个 agent key + `build_cli_args` 输出）
+- [ ] **P1-T11** Baseline `python main.py NVDA 2026-04-15` → decision JSON（CLI 走订阅，零 API 费）；同时 pin 真实 CLI flag 名
 
 **Session 01 Exit**: P1-T11 绿灯 → `feat(P1): scaffold + per-agent model config` → 切换到 Session 02
 
@@ -207,7 +207,7 @@
 
 ---
 
-## Session 17 — Backtest 框架 + sim_date 强制（待开始 · Opus 4.6）
+## Session 17 — Backtest 框架 + sim_date 强制 — **[DEFERRED 2026-04-16]**
 
 **Phase**: 7 · **SPEC**: §13 Phase 7, §8.2, §14
 
@@ -218,7 +218,7 @@
 
 ---
 
-## Session 18 — Backtest 运行 + 指标 + 调参（待开始）
+## Session 18 — Backtest 运行 + 指标 + 调参 — **[DEFERRED 2026-04-16]**
 
 **Phase**: 7 · **SPEC**: §13 Phase 7, §16
 
@@ -228,7 +228,7 @@
 
 ---
 
-## Session 19 — 30 天 paper validation（待开始）
+## Session 19 — 30 天 paper validation — **[DEFERRED 2026-04-16]**
 
 **Phase**: 8 · **SPEC**: §13 Phase 8, §16, §15
 
@@ -242,7 +242,7 @@
 
 ---
 
-## Session 20 — Live executor + Phase 9 go-live（待开始）
+## Session 20 — Live executor + Phase 9 go-live — **[DEFERRED 2026-04-16]**
 
 **Phase**: 9 · **SPEC**: §13 Phase 9, §10A.5
 
@@ -259,6 +259,7 @@
 |---|---|---|
 | 2026-04-16 | 创建 `TASKS.md` + `CLAUDE.md`（Session 01 启动） | 启动任务追踪 |
 | 2026-04-16 | **方向修正**：初版 "方案 A = Claude Agent SDK + CC 订阅" 被官方文档否决。SDK 强制要求 `ANTHROPIC_API_KEY`，**不走**订阅。真正走订阅的路径只有 `claude -p` CLI 子进程。 | SPEC §2 / §6 / §11.3 / §12 的 LLM 调用方式待重定（等用户 A-Strict / A-Gray / E 再选一次） |
+| 2026-04-16 | **ADR-2026-04-16 落地**：用户选 A-Strict（`claude` CLI）+ 暂缓 Phase 7-9 回测 / paper 验证 / live。fork 确认为 lydiagao/TradingAgents；uv 替 conda；merge 布局保留历史。 | SPEC §2 / §6 / §11.3 / §12 / §13 Phase 1/7/8/9 修订；PROGRESS P1-T3/T4/T5/T9/T11 改写；Session 17-20 标 DEFERRED；active task 74→57；P1-T1 ✅ |
 
 ---
 
@@ -270,6 +271,12 @@
 - 无任何 P1 任务已完成
 - `TradingAgents` 尚未 fork / clone
 - 本机无 `gh` / `conda`，仅有 `uv 0.11.2` + Python 3.14.2
+
+**Session 01 中已发生**：
+- 确定 LLM 后端 = A-Strict（`claude` CLI），Phase 7-9 暂缓（见 变更记录）
+- SPEC / PROGRESS / TASKS 同步修订
+- P1-T1 ✅（fork = lydiagao/TradingAgents）
+- P1-T2 进行中：即将 clone fork 并 merge planning 历史
 
 **第一个动作**：等待用户回复关于 5 个 blocker 的决策：
 1. GitHub fork 方式（浏览器 / 安装 gh / 先跳过）

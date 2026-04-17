@@ -42,7 +42,9 @@ A 9-layer multi-agent trading system specialized for quantum computing stocks (I
 
 - **Python**: 3.13
 - **Agent framework**: LangGraph (already used by TradingAgents)
-- **LLM SDK**: `anthropic` Python SDK (v0.40+)
+- **LLM invocation**: **`claude` CLI subprocess** (走 Claude Code 订阅，不走 API 计费) — see §6 ADR-2026-04-16
+  - 原方案 `anthropic` Python SDK 被替换：`claude_agent_sdk` 不支持订阅认证（官方 policy 明确禁止），走 CLI 子进程是唯一走订阅的路径
+  - 需要 `claude` CLI 在 `PATH` 里且已 `claude login` 完成
 - **Vector store**: ChromaDB (local, embedded)
 - **Persistence**: SQLite via SQLAlchemy
 - **Scheduler**: system cron on Linux or `launchd` on macOS (NOT APScheduler — see §11.1 ADR)
@@ -67,9 +69,7 @@ A 9-layer multi-agent trading system specialized for quantum computing stocks (I
 ### requirements.txt (seed, extend from TradingAgents/requirements.txt)
 
 ```
-anthropic>=0.40.0
 langgraph>=0.2.0
-langchain-anthropic
 chromadb
 sentence-transformers
 sqlalchemy
@@ -84,13 +84,14 @@ python-dotenv
 loguru
 pytest
 pytest-asyncio
-vectorbt
 pandas
 numpy
 pydantic>=2.0
 ```
-(No `apscheduler` — scheduling is delegated to the OS via cron/launchd, §11.1.
-No `backtrader` — superseded by `vectorbt`, §13 Phase 7.)
+- `anthropic` / `langchain-anthropic` **已从 requirements 移除**（ADR-2026-04-16：LLM 调用走 `claude` CLI 子进程，不走 Anthropic SDK）。
+- 运行前置：系统需装好 `claude` CLI 并已 `claude login`。
+- `vectorbt` 暂不纳入（ADR-2026-04-16：Phase 7 回测暂缓）。
+- 无 `apscheduler` — scheduling 交给 OS cron/launchd（§11.1）。
 
 ---
 
@@ -527,14 +528,26 @@ tradingagents/
 
 The baseline TradingAgents framework only has two tiers (`deep_think_llm`, `quick_think_llm`). Modify to support per-agent configuration.
 
+### ADR-2026-04-16 — 走 `claude` CLI 子进程，不走 Anthropic SDK
+
+**背景**：原 SPEC 用 `anthropic` Python SDK / `langchain_anthropic.ChatAnthropic`。调研后确认 `claude_agent_sdk` 不支持 Claude Code 订阅计费（Anthropic 官方 policy 明确禁止 SDK 使用 claude.ai OAuth）。要走订阅，唯一路径是 `claude` CLI 子进程。
+
+**结论**：每次 agent 调用 = `subprocess.run(["claude", "-p", ...])`。从 CC 订阅消耗额度，不产生 API 费用。
+
+**取舍**：
+- ✅ 零 API 支出（仅依赖已付的 CC 订阅）
+- ✅ CLI 支持 `--output-format json` + JSON Schema 结构化输出
+- ✅ 支持 per-call `--model` 覆盖
+- ⚠️ 自定义 Python 工具（moomoo client、RAG retrieval、SEC EDGAR）不能作为 MCP tool 挂入 CLI；改为 LangGraph node 里手动编排："先拉数据 → 塞 prompt → CLI 调用 → 解析 JSON"
+- ⚠️ Extended thinking 通过 CLI flag 传递（`--thinking-budget N` 或等价），验证后 pin 到 `build_thinking_param` 的输出
+- ⚠️ 每次子进程启动 ~500ms overhead，每日 16 agent × 1 ticker = 可忽略
+
 ### `tradingagents/config/model_config.py`
 
 ```python
 # Each entry pins a model ID and an optional extended-thinking budget (tokens).
-# The Anthropic SDK exposes extended thinking as
-#   thinking={"type": "enabled", "budget_tokens": N}
-# There is no "effort" parameter and no "adaptive" thinking type in the public
-# SDK. Do not invent one. If you need more reasoning, raise budget_tokens.
+# Runtime invocation is `claude -p` CLI subprocess — see ADR-2026-04-16.
+# There is no "effort" parameter. If you need more reasoning, raise budget_tokens.
 
 AGENT_MODEL_MAP = {
     # Layer 3 - Market & flow analysts (Haiku for structured data, no thinking)
@@ -569,53 +582,68 @@ AGENT_MODEL_MAP = {
 def get_model_config(agent_name: str) -> dict:
     return AGENT_MODEL_MAP[agent_name]
 
-def build_thinking_param(budget: int) -> dict | None:
-    """Return the `thinking` kwarg for the Anthropic SDK, or None to disable."""
-    if budget and budget > 0:
-        return {"type": "enabled", "budget_tokens": budget}
-    return None
+def build_cli_args(agent_name: str, prompt_path: str, schema_path: str | None = None) -> list[str]:
+    """
+    构造 `claude -p` CLI 调用参数列表。
+    - prompt_path: 本次 prompt 文件路径（prompt 通过 stdin 或 -p 字符串传）
+    - schema_path: 可选 JSON Schema 路径（structured output）
+    thinking_budget > 0 时追加 `--thinking-budget N`（在 Phase 1 首次实跑时验证 CLI flag 名，如与此不符则 pin 正确写法）。
+    """
+    cfg = AGENT_MODEL_MAP[agent_name]
+    args = ["claude", "-p", "--output-format", "json", "--model", cfg["model"]]
+    if cfg["thinking_budget"] > 0:
+        args += ["--thinking-budget", str(cfg["thinking_budget"])]
+    if schema_path:
+        args += ["--json-schema", schema_path]
+    return args
+```
+
+### LangGraph node 调用模板 (`tradingagents/agents/_runner.py`)
+
+```python
+import json, subprocess
+from tradingagents.config.model_config import build_cli_args
+
+def run_claude(agent_name: str, prompt: str, schema: dict | None = None,
+               timeout: int = 120) -> dict:
+    """
+    LangGraph node 里统一调用入口。Returns parsed JSON (or raw text if schema=None).
+    Raises TimeoutError / subprocess.CalledProcessError on failure.
+    """
+    args = build_cli_args(agent_name, prompt_path=None,
+                          schema_path=_write_schema_tmpfile(schema) if schema else None)
+    proc = subprocess.run(args, input=prompt, capture_output=True,
+                          text=True, timeout=timeout, check=True)
+    return json.loads(proc.stdout)
 ```
 
 ### Modify `graph/trading_graph.py`
 
-Locate where agents are instantiated (in `setup.py` or similar). For each agent,
-call `get_model_config(agent_name)` and instantiate the LLM client with the
-correct model ID and thinking parameter.
+Locate where agents are instantiated (`setup.py` 或等效文件)。把 `ChatAnthropic` / `Anthropic()` 调用替换为 `run_claude(agent_name, prompt, schema)`。LangGraph 的 node function 里显式调 `run_claude`，不再依赖 `llm.bind_tools(...)` —— 自定义工具（moomoo / RAG / SEC）在 node 里直接调 Python 函数，把结果塞入 prompt 再给 CLI。
 
-**Preferred (native Anthropic SDK)**:
+**不再使用的模式**：
 ```python
+# 旧（ADR-2026-04-16 之前）
 from anthropic import Anthropic
 client = Anthropic()
-cfg = get_model_config("quantum_tech_expert")
-response = client.messages.create(
-    model=cfg["model"],
-    max_tokens=4096,
-    thinking=build_thinking_param(cfg["thinking_budget"]),  # None or {"type":"enabled",...}
-    messages=[...],
-)
-```
+client.messages.create(model=..., thinking={"type":"enabled","budget_tokens":N}, ...)
 
-**LangChain wrapper (only if you stay inside the LangGraph inheritance from TradingAgents)**:
-```python
+# 旧
 from langchain_anthropic import ChatAnthropic
-cfg = get_model_config("quantum_tech_expert")
-llm = ChatAnthropic(
-    model=cfg["model"],
-    max_tokens=4096,
-    thinking=build_thinking_param(cfg["thinking_budget"]),
-)
+ChatAnthropic(model=..., thinking=...)
 ```
 
-**Forbidden patterns** (do NOT use — these are not real API fields):
-```python
-# WRONG — no "effort" parameter exists on the Anthropic SDK
-extra_body={"effort": "high"}
-# WRONG — no "adaptive" thinking type
-thinking={"type": "adaptive"}
-```
+**禁止的 pattern**（仍然）：
+- `extra_body={"effort": "high"}` — 不存在的字段
+- `thinking={"type": "adaptive"}` — SDK 没有；CLI 里如支持再单独验证
 
-If the installed `anthropic` SDK version is older than the extended-thinking
-release, upgrade it; do not work around it with speculative kwargs.
+**Phase 1 需要验证的 CLI 假设**（P1-T11 跑第一次时落实）：
+- `claude -p` 的确切 flag 名（`--thinking-budget` vs 其他）
+- `--output-format json` 返回结构（是否包裹在 `{"result": ...}` 里）
+- `--json-schema` 参数可用性
+- 不可交互场景下 `--allowedTools` / `--permission-mode` 的需要性
+
+验证完毕后，把真实可用的 flag 名 pin 入 `build_cli_args`。
 
 ---
 
@@ -1746,37 +1774,39 @@ def check_kill_switch():
 
 Call `check_kill_switch()` at the start of every pipeline run. User can `touch /tmp/quantum_agent_kill` to immediately halt.
 
-### 11.3 Cost tracker (`orchestration/cost_tracker.py`)
+### 11.3 Usage tracker (`orchestration/cost_tracker.py`)
 
-Track Anthropic API usage per run. Alert if single-day spend exceeds a threshold.
+ADR-2026-04-16 后，LLM 调用走 CC 订阅（非 per-token 计费），所以 tracker 从"美元预算熔断"改为"**调用次数 + 并发监控**"。目的：防止单 cycle 失控、早期发现订阅额度触顶。
 
 ```python
-DAILY_COST_ALERT_USD = 30
-DAILY_COST_HARD_STOP_USD = 50
+DAILY_CALL_ALERT = 200          # 每日 claude-CLI 调用数告警阈值
+DAILY_CALL_HARD_STOP = 400      # 硬停阈值（防止死循环或失控 retry）
+PER_CYCLE_CALL_HARD_STOP = 80   # 单 cycle 最多 80 次 CLI 调用（16 agent × 5 retry 留 buffer）
+CLI_MAX_CONCURRENCY = 4         # 避免 429/529：同时并发的 claude 子进程不超过 4
 
-# Anthropic pricing (per million tokens).
-# VERIFY AGAINST https://www.anthropic.com/pricing BEFORE PRODUCTION USE —
-# these values drive the daily-cost circuit breaker, and a 3x miss on Opus
-# pricing would defeat DAILY_COST_HARD_STOP_USD entirely.
-PRICING = {
-    "claude-haiku-4-5-20251001":    {"input": 1.0,  "output": 5.0},
-    "claude-sonnet-4-6":            {"input": 3.0,  "output": 15.0},
-    "claude-opus-4-6":              {"input": 15.0, "output": 75.0},  # Opus tier pricing — verify current rate
-}
+def track_call(model: str, input_tokens: int, output_tokens: int,
+               wall_ms: int, cycle_id: str) -> None:
+    """
+    Log 一次 CLI 调用。input_tokens/output_tokens 从 CLI JSON 输出的 usage 字段读取（如存在）。
+    Append 到 SQLite cost_log table: (timestamp, cycle_id, model, input_tokens, output_tokens, wall_ms).
+    cost_usd 列保留但置 0（订阅计费模型下无法逐次归算美元）。
+    """
+    # ...
 
-def track_call(model: str, input_tokens: int, output_tokens: int) -> float:
-    price = PRICING[model]
-    cost = (input_tokens / 1e6) * price["input"] + (output_tokens / 1e6) * price["output"]
-    # append to SQLite cost_log table with (timestamp, model, input_tokens, output_tokens, cost_usd)
-    return cost
+def check_daily_calls():
+    today_calls = _count_today()
+    if today_calls > DAILY_CALL_HARD_STOP:
+        raise RuntimeError(f"Daily CLI call hard stop hit: {today_calls}")
+    if today_calls > DAILY_CALL_ALERT:
+        alert_user(f"Daily CLI calls approaching limit: {today_calls}")
 
-def check_daily_budget():
-    today_spend = _sum_today()  # from SQLite
-    if today_spend > DAILY_COST_HARD_STOP_USD:
-        raise RuntimeError(f"Daily cost hard stop hit: ${today_spend:.2f}")
-    if today_spend > DAILY_COST_ALERT_USD:
-        alert_user(f"Daily cost approaching limit: ${today_spend:.2f}")
+def check_per_cycle_calls(cycle_id: str):
+    calls = _count_cycle(cycle_id)
+    if calls > PER_CYCLE_CALL_HARD_STOP:
+        raise RuntimeError(f"Per-cycle call hard stop hit: {calls}")
 ```
+
+**Subscription rate-limit awareness**：CC 订阅的 5 小时滚动窗口上限官方未公开。若遇 429/529 → 退避 + 告警，不要重试风暴。`CLI_MAX_CONCURRENCY` 从 4 起步，出问题降。
 
 ### 11.4 Alerts (`orchestration/alerts.py`)
 
@@ -1803,8 +1833,8 @@ def alert_cost(amount_usd: float):
 ### `.env` file
 
 ```bash
-# LLM
-ANTHROPIC_API_KEY=sk-ant-...
+# LLM: ADR-2026-04-16 起走 `claude` CLI 订阅模式，不再需要 ANTHROPIC_API_KEY
+# 前置：确保 `claude --version` 能跑，且 `claude login` 已完成（~/.claude/auth 存在）
 
 # Free-tier APIs
 NEWSAPI_KEY=...              # https://newsapi.org/ free tier
@@ -1826,14 +1856,16 @@ GMAIL_TO=user@example.com
 SLACK_WEBHOOK_URL=...        # optional
 
 # Operational
-DAILY_COST_ALERT_USD=30
-DAILY_COST_HARD_STOP_USD=50
+DAILY_CALL_ALERT=200         # CLI 调用次数告警（见 §11.3）
+DAILY_CALL_HARD_STOP=400     # CLI 调用次数硬停
+PER_CYCLE_CALL_HARD_STOP=80  # 单 cycle 最大调用数
+CLI_MAX_CONCURRENCY=4        # 并发 claude 子进程上限
 ENVIRONMENT=paper            # 'paper' | 'live'
 ```
 
-### Anthropic batch tips
+### Batch API（原注）
 
-For non-urgent backtesting, use the Message Batches API for 50% discount. Not appropriate for live pre-market decisions (latency too high).
+原 SPEC 推荐 Phase 7 回测用 Anthropic Message Batches API（5 折）。**ADR-2026-04-16 暂缓**：Phase 7 回测已延后；回测上马时再重评估（要么单独开 Anthropic API 账单跑回测，要么用 CLI 串行分批）。
 
 ---
 
@@ -1845,15 +1877,15 @@ Execute in order. Do not skip phases.
 
 - [ ] Fork `TauricResearch/TradingAgents` on GitHub
 - [ ] Clone locally, create `quantum-fork` branch
-- [ ] Create conda env `quantum-agent` with Python 3.13
+- [ ] Create Python 3.13 env via `uv venv --python 3.13 .venv` (or conda — §2 ADR-2026-04-16: uv OK)
 - [ ] `pip install -r requirements.txt` + added deps
-- [ ] Copy `.env.example` → `.env`, fill in `ANTHROPIC_API_KEY`
+- [ ] 验证 `claude` CLI 可用且 `claude login` 已完成（**不需要** `ANTHROPIC_API_KEY`，见 §6 ADR-2026-04-16）
 - [ ] Create `tradingagents/config/model_config.py` per Section 6
-- [ ] Modify `tradingagents/graph/setup.py` to use per-agent models
-- [ ] Test baseline: run pipeline on NVDA with existing 4 analysts, confirm cost ~$0.50
+- [ ] Modify `tradingagents/graph/setup.py` to use per-agent CLI invocations via `run_claude(...)`
+- [ ] Test baseline: run pipeline on NVDA with existing 4 analysts; verify decision JSON（CLI 模式，无 API 费用）
 - [ ] Create `tests/unit/test_model_config.py`
 
-**Exit criteria**: `python main.py NVDA 2026-04-15` produces a decision JSON.
+**Exit criteria**: `python main.py NVDA 2026-04-15` produces a decision JSON（CLI 调用走 CC 订阅）。
 
 ### Phase 2: Data layer (target: 2 weeks)
 
@@ -1928,7 +1960,12 @@ daily latency report is generated.
 
 **Exit criteria**: Schedule daily run at 8:00 EST, decisions appear in Gmail inbox, cost tracked in SQLite, latency report attached.
 
-### Phase 7: Backtest (target: 2-4 weeks)
+### Phase 7: Backtest (target: 2-4 weeks) — **[DEFERRED — ADR-2026-04-16 scope cut]**
+
+> 用户 2026-04-16 决定先不做回测。本阶段保留为 future roadmap，实际启动前需重评估：
+> - CLI 订阅模式下长回测（~9000 次调用）的速率瓶颈
+> - 或单独开 Anthropic API 账单 + Message Batches（5 折）跑一次性回测
+
 
 - [ ] Implement `backtest/runner.py` using `vectorbt` (Session 0b ADR; backtrader removed from requirements)
 - [ ] Historical data: at least Jan 2024 → present (captures quantum rally + drawdown)
@@ -1940,7 +1977,10 @@ daily latency report is generated.
 
 **Exit criteria**: 12 months of backtest complete. SR > 1.5 AND MDD < 25% to proceed.
 
-### Phase 8: Live paper validation (target: 30 days)
+### Phase 8: Live paper validation (target: 30 days) — **[DEFERRED — ADR-2026-04-16]**
+
+> 依赖 Phase 7 回测结果决定是否启动。保留为 future roadmap。
+
 
 - [ ] Ensure paper execution (Phase 5) is running daily
 - [ ] Daily report to Gmail with positions, P&L, agent rationale, and latency stats
@@ -1951,7 +1991,10 @@ daily latency report is generated.
 
 **Exit criteria**: 30-day paper Sharpe > 1.0 AND max drawdown < 15% AND median `total_market_to_fill_ms` stable within 20% of Phase 5 baseline. User approval required before Phase 9.
 
-### Phase 9: Small live (target: ongoing)
+### Phase 9: Small live (target: ongoing) — **[DEFERRED — ADR-2026-04-16]**
+
+> 真钱上线前必须通过 Phase 7 回测 + Phase 8 paper 验证。保留为 future roadmap。
+
 
 - [ ] Switch `ENVIRONMENT=live` in `.env`
 - [ ] Cap total quantum exposure at 5% of portfolio initially (not 15%)
