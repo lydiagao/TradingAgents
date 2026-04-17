@@ -13,17 +13,17 @@ Living checklist mirroring SPEC Phase 1-9 tasks. Each task has a unique ID, an e
 
 ## Phase 1 — Scaffold (target: 1 week)
 
-- [ ] **P1-T1** Fork `TauricResearch/TradingAgents` on GitHub. *Done*: fork URL accessible under user's account. *SPEC*: §13 Phase 1
-- [ ] **P1-T2** Clone fork locally, create `quantum-fork` branch. *Done*: `git branch --show-current` returns `quantum-fork`. *SPEC*: §13 Phase 1
-- [ ] **P1-T3** Create Python 3.13 env via `uv venv --python 3.13 .venv`（ADR-2026-04-16：uv 代替 conda）. *Done*: `source .venv/bin/activate && python --version` shows 3.13+. *SPEC*: §2, §13 Phase 1
-- [ ] **P1-T4** Install dependencies: `pip install -r requirements.txt` plus added deps per SPEC §2（ADR-2026-04-16 后 18 个 deps，不含 anthropic/langchain-anthropic/vectorbt）. *Done*: `pip list` shows all deps; `pytest --co` runs. *SPEC*: §2
-- [ ] **P1-T5** 验证 `claude` CLI 可用 + CC 订阅已登录（ADR-2026-04-16：**不再**用 `ANTHROPIC_API_KEY`）. *Done*: `claude -p "reply with {\"ok\":true}" --output-format json` 返回合法 JSON. *SPEC*: §6 ADR, §12
-- [ ] **P1-T6** Create `tradingagents/config/model_config.py` with `AGENT_MODEL_MAP` + `get_model_config()` + `build_thinking_param()`. *Done*: unit test asserts every agent key returns a valid model ID + thinking_budget. *SPEC*: §6
-- [ ] **P1-T7** Create `tradingagents/config/universe.py` with `QUANTUM_PURE_PLAYS`, `QUANTUM_EXPOSURE`, `UNIVERSE`. *Done*: `from tradingagents.config.universe import UNIVERSE` returns 9 tickers. *SPEC*: §3
-- [ ] **P1-T8** Create `tradingagents/config/ciks.json` with 9-ticker CIK map. *Done*: JSON parses; SEC EDGAR `https://data.sec.gov/submissions/CIK{cik}.json` returns 200 for each. *SPEC*: §4.3
-- [ ] **P1-T9** Modify `tradingagents/graph/setup.py` (or equivalent) to replace `ChatAnthropic` / native Anthropic SDK calls with `run_claude(agent_name, prompt, schema)` CLI wrapper (ADR-2026-04-16). *Done*: running a single agent uses the model from `AGENT_MODEL_MAP` via `claude -p` subprocess, not a hardcoded default. *SPEC*: §6 ADR
-- [ ] **P1-T10** Create `tests/unit/test_model_config.py`. *Done*: pytest passes; covers all 16 agent keys. *SPEC*: §14
-- [ ] **P1-T11** Baseline pipeline run: `python main.py NVDA 2026-04-15` produces a decision JSON（ADR-2026-04-16 后走 `claude` CLI 订阅，无 API 费用）. *Done*: `decisions` table has one row for NVDA; stdout shows decision JSON. 同时 pin 下 CLI 的真实 flag 名（§6 ADR 验证项）. *SPEC*: §13 Phase 1 exit
+- [x] **P1-T1** Fork `TauricResearch/TradingAgents` on GitHub. → https://github.com/lydiagao/TradingAgents
+- [x] **P1-T2** Clone fork locally, create `quantum-fork` branch. Planning history merged via git merge --allow-unrelated-histories.
+- [x] **P1-T3** `uv venv --python 3.13 .venv` — Python 3.13.12.
+- [x] **P1-T4** `uv pip install -e .` (upstream) + `uv pip install -r requirements-quantum.txt` (9 additions). 75 tests in test_model_config + 6 upstream.
+- [x] **P1-T5** `claude` CLI 2.1.112 可用 + CC 订阅已登录。`--model` / `--effort` / `--json-schema` / `--permission-mode` flags pinned.
+- [x] **P1-T6** `tradingagents/config/model_config.py` — AGENT_MODEL_MAP (16 keys) + get_model_config + build_cli_args + _budget_to_effort.
+- [x] **P1-T7** `tradingagents/config/universe.py` — 9 tickers.
+- [x] **P1-T8** `tradingagents/config/ciks.json` — 9 CIKs, all SEC EDGAR 200.
+- [x] **P1-T9** `tradingagents/agents/_runner.py` — run_claude(agent_name, prompt, schema). CLI structured_output 字段 pinned. Upstream bind_tools 改写推迟到 Phase 3.
+- [x] **P1-T10** `tests/unit/test_model_config.py` — 75 tests all green (0.03s).
+- [x] **P1-T11** `python -m tradingagents.phase1_baseline NVDA 2026-04-15` → `{"action":"hold","confidence":0.62,...}`. CLI 走订阅，$0 API。
 
 ---
 

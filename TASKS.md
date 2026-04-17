@@ -10,8 +10,8 @@
 | 字段 | 值 |
 |---|---|
 | **总任务数** | 57 active + 17 deferred = 74 |
-| **已完成** | 10（P1-T1 → P1-T10）|
-| **完成率 (active)** | 17.5 % (10/57) |
+| **已完成** | 11（P1-T1 → P1-T11 全部完成 ✅）|
+| **完成率 (active)** | 19.3 % (11/57) |
 | **当前 Session** | S01 — Scaffold & model config（进行中） |
 | **当前 Phase** | Phase 1 |
 | **当前工作仓库** | `/Users/huigao/Claude /Claude_code/TradingAgents/`（合并后新址） |
@@ -59,7 +59,11 @@
   > TestGetModelConfig (copy / UnknownAgentError)
   > TestBudgetToEffort (10 parametrized boundary values)
   > TestBuildCliArgs (model / effort / tools / schema / permission / extra_args / all 16 agents / error path)
-- [ ] **P1-T11** Baseline 跑 → decision JSON。**原计划受 P1-T9 收窄影响**：`python main.py` 走 upstream pipeline 仍需 `ANTHROPIC_API_KEY`（因为 upstream agents 离不开 bind_tools）。A-Strict 下的 P1-T11 改为"mini baseline"：用 `run_claude("portfolio_manager", <NVDA 数据 prompt>, schema=decision_schema)` 走一遍 CLI 链路，产出 decision JSON；完整 upstream pipeline 的替换 Phase 3 完成。
+- [x] **P1-T11** Mini baseline `python -m tradingagents.phase1_baseline NVDA 2026-04-15` → decision JSON ✅
+  > 结果：`{"action":"hold","confidence":0.62,"reasoning":"...","risk_notes":"..."}`
+  > 模型：`claude-opus-4-6` (portfolio_manager per AGENT_MODEL_MAP, xhigh effort)
+  > 成本：$0 API（CC 订阅消耗）
+  > 端到端链路验证：yfinance 拉数据 → 构建 prompt → `run_claude` CLI → `--json-schema` structured output → 解析 `structured_output` 字段 → JSON dump
 
 **Session 01 Exit**: P1-T11 绿灯 → `feat(P1): scaffold + per-agent model config` → 切换到 Session 02
 
